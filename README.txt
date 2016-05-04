@@ -37,16 +37,16 @@ Jython, including - but not limited to - bug reports, patches, pull
 requests, documentation changes, support emails, and fantastic
 conversation on Freenode at #jython.
 
-## Releasing to Artifactory
-#### Prerequisites
+RELEASING TO ARTIFACTORY
+Prerequisites
 1. Install gpg on OSX (https://gpgtools.org/)
 2. Use Java 1.7 (1.8 does not compile) (https://github.com/antlr/antlr3/issues/151)
 3. Download maven ant-tasks and place in ~/.ant/lib (https://maven.apache.org/ant-tasks/index.html)
 4. Create a settings.xml (~/.m2/settings.xml) file with credentials for aritfactory. See https://maven.apache.org/settings.html.
 
-#### Update version number
+Update version number
 In maven/build.xml, update the project.version property to reflect a new version
 
-#### Deploy
-```cd maven```
-```ant deploy-standalone```
+Deploy
+cd maven
+ant deploy-standalone
