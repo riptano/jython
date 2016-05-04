@@ -27,12 +27,12 @@
 <!-- ================================================= -->
 <!--            Maven Bundle Buildfile                 -->
 <!-- ================================================= -->
-<project name="jython-maven" default="bundle-all" basedir="..">
+<project name="jython-maven" default="bundle-all" basedir=".." xmlns:artifact="antlib:org.apache.maven.artifact.ant">
 
   <property file="${user.home}/ant.properties" />
   <property file="${basedir}/default.properties"/>
 
-  <property name="project.version" value="2.7.0-SNAPSHOT"/>
+  <property name="project.version" value="2.7.1b10"/>
 
   <property name="m2.repo" value="${user.home}/.m2/repository"/>
   <property name="m2.groupDir" value="org/python"/>
@@ -53,6 +53,22 @@
 
   <target name="install" depends="prep">
     <m2-install artifactId="jython"/>
+  </target>
+
+  <target name="deploy-standalone" depends="bundle-standalone">
+  	<property name="artifactId" value="jython-standalone"/>
+  	<property name="install.name" value="${artifactId}-${project.version}"/>
+  	<property name="pomLocation" value="${build.dir}/${install.name}.pom"/>
+  	<copy file="maven/pom-template.xml" tofile="${pomLocation}">
+  	    <filterset>
+  	        <filter token="PROJECT-VERSION" value="${project.version}"/>
+  	        <filter token="ARTIFACT-ID" value="${artifactId}"/>
+  	    </filterset>
+  	</copy>
+  	<artifact:pom id="maven.project" file="${pomLocation}"/>
+    <artifact:deploy file="${build.dir}/${install.name}.jar">
+    	<pom refid="maven.project"/>
+    </artifact:deploy>
   </target>
 
   <target name="install-standalone" depends="prep">
@@ -208,5 +224,5 @@
     <ant antfile="build.xml" target="all-jars"/>
   </target>
 
-  <target name="prep" depends="build-jython, validate-pom"/>
+  <target name="prep" depends="build-jython"/>
 </project>
