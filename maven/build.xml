@@ -32,7 +32,7 @@
   <property file="${user.home}/ant.properties" />
   <property file="${basedir}/default.properties"/>
 
-  <property name="project.version" value="2.7.0.1"/>
+  <property name="project.version" value="2.7.0.3"/>
 
   <property name="m2.repo" value="${user.home}/.m2/repository"/>
   <property name="m2.groupDir" value="org/python"/>
@@ -55,7 +55,7 @@
     <m2-install artifactId="jython"/>
   </target>
 
-  <target name="deploy-standalone" depends="bundle-standalone">
+  <target name="deploy-standalone" depends="clean, clean-dist-dir, bundle-standalone">
   	<property name="artifactId" value="jython-standalone"/>
   	<property name="install.name" value="${artifactId}-${project.version}"/>
   	<property name="pomLocation" value="${build.dir}/${install.name}.pom"/>
@@ -79,7 +79,7 @@
     <m2-bundle artifactId="jython"/>
   </target>
 
-  <target name="bundle-standalone" depends="prep">
+  <target name="bundle-standalone" depends="build-jython-standalone">
     <m2-bundle artifactId="jython-standalone"/>
   </target>
 
@@ -175,8 +175,8 @@
       <copy file="${dist.base}/@{artifactId}.jar"
             tofile="${build.dir}/@{artifactId}-${project.version}.jar"/>
 
-      <copy file="dist/sources.jar" tofile="${build.dir}/@{artifactId}-${project.version}-sources.jar"/>
-      <copy file="dist/javadoc.jar" tofile="${build.dir}/@{artifactId}-${project.version}-javadoc.jar"/>
+      <!--<copy file="dist/sources.jar" tofile="${build.dir}/@{artifactId}-${project.version}-sources.jar"/>
+      <copy file="dist/javadoc.jar" tofile="${build.dir}/@{artifactId}-${project.version}-javadoc.jar"/>-->
 
       <!-- TODO: make the gpg sign step optional -->
       <exec executable="gpg">
@@ -184,20 +184,20 @@
           <arg value="${build.dir}/@{artifactId}-${project.version}.jar"/>
       </exec>
 
-      <exec executable="gpg">
+     <!-- <exec executable="gpg">
           <arg value="-ab"/>
           <arg value="${build.dir}/@{artifactId}-${project.version}-javadoc.jar"/>
-      </exec>
+      </exec> -->
 
       <exec executable="gpg">
           <arg value="-ab"/>
           <arg value="${build.dir}/@{artifactId}-${project.version}.pom"/>
       </exec>
 
-      <exec executable="gpg">
+      <!--<exec executable="gpg">
           <arg value="-ab"/>
           <arg value="${build.dir}/@{artifactId}-${project.version}-sources.jar"/>
-      </exec>
+      </exec>-->
 
 
     </sequential>
@@ -222,6 +222,16 @@
 
   <target name="build-jython" if="do.build">
     <ant antfile="build.xml" target="all-jars"/>
+  </target>
+
+  <target name="build-jython-standalone" if="do.build">
+    <ant antfile="build.xml" target="jar-standalone"/>
+  </target>
+
+  <target name="clean-dist-dir">
+    <delete includeemptydirs="true" failonerror="false">
+      <fileset dir="${dist.base}" includes="**/*" />
+    </delete>
   </target>
 
   <target name="prep" depends="build-jython"/>

@@ -4,7 +4,7 @@ import re
 from StringIO import StringIO
 import types
 
-from java.lang import RuntimeException
+from java.lang import RuntimeException, System
 from java.io import BufferedInputStream, BufferedReader, FileReader, InputStreamReader, ByteArrayInputStream, IOException
 from java.security import KeyStore, Security, InvalidAlgorithmParameterException
 from java.security.cert import CertificateException, CertificateFactory
@@ -12,7 +12,30 @@ from java.security.interfaces import RSAPrivateCrtKey
 from java.security.interfaces import RSAPublicKey
 from javax.net.ssl import (
     X509KeyManager, X509TrustManager, KeyManagerFactory, SSLContext, TrustManager, TrustManagerFactory)
+
 try:
+    # dev version from extlibs OR if in classpath.
+    #
+    # Assumes BC's API is sufficiently stable, but this assumption
+    # seems safe based on our experience using BC.
+    #
+    # This change in import ordering - compared to similar conditional
+    # imports - is to workaround the problem in
+    # http://bugs.jython.org/issue2469, due to the fact that jarjar-ed
+    # jars - like other shading - lose their signatures. For most jars
+    # this is not an issue, and we have been removing signature files
+    # since 2.7.0, but it causes conflicts Java's security provider
+    # model.
+    from org.bouncycastle.asn1.pkcs import PrivateKeyInfo
+    from org.bouncycastle.cert import X509CertificateHolder
+    from org.bouncycastle.cert.jcajce import JcaX509CertificateConverter
+    from org.bouncycastle.jce.provider import BouncyCastleProvider
+    from org.bouncycastle.jce import ECNamedCurveTable
+    from org.bouncycastle.jce.spec import ECNamedCurveSpec
+    from org.bouncycastle.openssl import PEMKeyPair, PEMParser, PEMEncryptedKeyPair, PEMException, \
+        EncryptionException
+    from org.bouncycastle.openssl.jcajce import JcaPEMKeyConverter, JcePEMDecryptorProviderBuilder
+except ImportError:
     # jarjar-ed version
     from org.python.bouncycastle.asn1.pkcs import PrivateKeyInfo
     from org.python.bouncycastle.cert import X509CertificateHolder
@@ -23,18 +46,6 @@ try:
     from org.python.bouncycastle.openssl import PEMKeyPair, PEMParser, PEMEncryptedKeyPair, PEMException, \
         EncryptionException
     from org.python.bouncycastle.openssl.jcajce import JcaPEMKeyConverter, JcePEMDecryptorProviderBuilder
-except ImportError:
-    # dev version from extlibs
-    from org.bouncycastle.asn1.pkcs import PrivateKeyInfo
-    from org.bouncycastle.cert import X509CertificateHolder
-    from org.bouncycastle.cert.jcajce import JcaX509CertificateConverter
-    from org.bouncycastle.jce.provider import BouncyCastleProvider
-    from org.bouncycastle.jce import ECNamedCurveTable
-    from org.bouncycastle.jce.spec import ECNamedCurveSpec
-    from org.bouncycastle.openssl import PEMKeyPair, PEMParser, PEMEncryptedKeyPair, PEMException, \
-        EncryptionException
-    from org.bouncycastle.openssl.jcajce import JcaPEMKeyConverter, JcePEMDecryptorProviderBuilder
-
 
 log = logging.getLogger("_socket")
 Security.addProvider(BouncyCastleProvider())
@@ -162,8 +173,10 @@ def _parse_password(password):
 
 def _extract_certs_from_keystore_file(f, password):
     keystore = KeyStore.getInstance(KeyStore.getDefaultType())
-    if password is None:  # default java keystore password is changeit
-        password = 'changeit'
+    if password is None:
+        password = System.getProperty('javax.net.ssl.trustStorePassword')
+        if password is None:  # default java keystore password is changeit
+            password = 'changeit'
     elif not isinstance(password, str):
         password = []
 
