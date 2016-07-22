@@ -782,7 +782,7 @@ class _realsocket(object):
             return future
         else:
             # OPSC-8851 Avoid lying to the caller of socket.send() by waiting until
-            # the bytes have been sent before reporting back that they have been sent.  
+            # the bytes have been sent before reporting back that they have been sent.
             return future.sync()
 
     def setblocking(self, flag):
