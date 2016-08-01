@@ -8,7 +8,7 @@
    to you under the Apache License, Version 2.0 (the
    "License"); you may not use this file except in compliance
    with the License.  You may obtain a copy of the License at
-   
+
      http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing,
@@ -32,7 +32,7 @@
   <property file="${user.home}/ant.properties" />
   <property file="${basedir}/default.properties"/>
 
-  <property name="project.version" value="2.7.0.3"/>
+  <property name="project.version" value="2.7.0.6"/>
 
   <property name="m2.repo" value="${user.home}/.m2/repository"/>
   <property name="m2.groupDir" value="org/python"/>
