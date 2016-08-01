@@ -781,9 +781,7 @@ class _realsocket(object):
                 raise future.cause()
             return future
         else:
-            # OPSC-8851 Avoid lying to the caller of socket.send() by waiting until
-            # the bytes have been sent before reporting back that they have been sent.  
-            return future.sync()
+            return future
 
     def setblocking(self, flag):
         if flag:
