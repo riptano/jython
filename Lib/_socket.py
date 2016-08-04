@@ -1152,6 +1152,7 @@ class _realsocket(object):
         bytes_writable = self.channel.bytesBeforeUnwritable()
         if bytes_writable > len(data):
             bytes_writable = len(data)
+        bytes_writable = min(bytes_writable, 8192)
 
         sent_data = data[:bytes_writable]
 
