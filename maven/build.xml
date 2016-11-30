@@ -39,7 +39,7 @@
 
   <property name="build.base" value="${basedir}/build"/>
   <property name="build.dir" value="${build.base}/maven"/>
-  <property name="dist.base" value="${basedir}/dist"/>
+  <property name="dist.base" value="/jython"/>
   <property name="src.dir" value="${basedir}/src"/>
 
   <condition property="do.build">
