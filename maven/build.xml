@@ -32,14 +32,14 @@
   <property file="${user.home}/ant.properties" />
   <property file="${basedir}/default.properties"/>
 
-  <property name="project.version" value="2.7.0.8"/>
+  <property name="project.version" value="2.7.0.9"/>
 
   <property name="m2.repo" value="${user.home}/.m2/repository"/>
   <property name="m2.groupDir" value="org/python"/>
 
   <property name="build.base" value="${basedir}/build"/>
   <property name="build.dir" value="${build.base}/maven"/>
-  <property name="dist.base" value="${basedir}/dist"/>
+  <property name="dist.base" value="/jython"/>
   <property name="src.dir" value="${basedir}/src"/>
 
   <condition property="do.build">
