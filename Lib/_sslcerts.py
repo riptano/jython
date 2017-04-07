@@ -181,13 +181,17 @@ def _extract_certs_from_keystore_file(f, password):
 
     keystore.load(BufferedInputStream(f), password)
     certs = []
+    private_key = None
 
     alias_iter = keystore.aliases()
     while alias_iter.hasMoreElements():
         alias = alias_iter.nextElement()
         certs.append(keystore.getCertificate(alias))
+        # Extract the first private key found, ignore additional keys
+        if not private_key:
+            private_key = keystore.getKey(alias, password)
 
-    return certs
+    return certs, private_key
 
 
 def _extract_certs_for_paths(paths, password=None):
@@ -201,7 +205,7 @@ def _extract_certs_for_paths(paths, password=None):
         with open(path) as f:
             # try to load the file as keystore file first
             try:
-                _certs = _extract_certs_from_keystore_file(f, password)
+                _certs, private_key = _extract_certs_from_keystore_file(f, password)
                 certs.extend(_certs)
             except IOException as err:
                 pass  # reported as 'Invalid keystore format'
