@@ -37,16 +37,25 @@ Jython, including - but not limited to - bug reports, patches, pull
 requests, documentation changes, support emails, and fantastic
 conversation on Freenode at #jython.
 
-RELEASING TO ARTIFACTORY
-Prerequisites
-1. Install gpg on OSX (https://gpgtools.org/)
-2. Use Java 1.7 (1.8 does not compile) (https://github.com/antlr/antlr3/issues/151)
-3. Download maven ant-tasks and place in ~/.ant/lib (https://maven.apache.org/ant-tasks/index.html)
-4. Create a settings.xml (~/.m2/settings.xml) file with credentials for aritfactory. See https://maven.apache.org/settings.html.
+##RELEASING TO ARTIFACTORY##
+######Prerequisites######
+1. Create a /jython directory and properly permission it. This is where build artifacts will go (note: we do this because jython has a bug where stacktraces display directory paths relative to where the build is and we don't want to expose our local dev paths).
+2. Install gpg on OSX (https://gpgtools.org/)
+3. Use Java 1.7 (1.8 does not compile) (https://github.com/antlr/antlr3/issues/151)
+   - JAVA_HOME=`/usr/libexec/java_home -v 1.7.0_80`
+4. Download maven ant-tasks and place in ~/.ant/lib (https://mvnrepository.com/artifact/org.apache.maven/maven-ant-tasks/2.1.3)
+5. Create a settings.xml (~/.m2/settings.xml) file with credentials for aritfactory. See https://maven.apache.org/settings.html.
 
-Update version number
+######Update version number######
 In maven/build.xml, update the project.version property to reflect a new version
 
-Deploy
+######Build + Deploy######
+```
 cd maven
 ant deploy-standalone
+```
+######Just Build######
+```
+cd maven
+ant build-jython-standalone
+```
