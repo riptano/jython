@@ -968,8 +968,6 @@ class SSLContext(object):
         except KeyError:
             raise ValueError("invalid protocol version")
 
-        # psd: I think this is a bug because protocol is a string and PROTOCOL_SSLv23 is an int
-        # however when I fixed it twisted blew up, so it's a "load bearing bug" -_-
         if protocol == PROTOCOL_SSLv23:  # darjus: at least my Java does not let me use v2
             self._protocol_name = 'SSL'
 
