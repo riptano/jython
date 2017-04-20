@@ -76,7 +76,12 @@ _PROTOCOL_NAMES = {
     PROTOCOL_TLSv1_2: 'TLSv1.2'
 }
 
-OP_ALL, OP_NO_SSLv2, OP_NO_SSLv3, OP_NO_TLSv1 = range(4)
+OP_ALL = 0
+OP_NO_SSLv2 = 1
+OP_NO_SSLv3 = 2
+OP_NO_TLSv1 = 4
+OP_NO_TLSv1_1 = 8
+OP_NO_TLSv1_2 = 16
 OP_SINGLE_DH_USE, OP_NO_COMPRESSION, OP_CIPHER_SERVER_PREFERENCE, OP_SINGLE_ECDH_USE = 1048576, 131072, 4194304, 524288
 
 VERIFY_DEFAULT, VERIFY_CRL_CHECK_LEAF, VERIFY_CRL_CHECK_CHAIN, VERIFY_X509_STRICT = 0, 4, 12, 32
@@ -953,17 +958,18 @@ def RAND_egd(path):
 def RAND_add(bytes, entropy):
     pass
 
-
 class SSLContext(object):
 
     _jsse_keyType_names = ('RSA', 'DSA', 'DH_RSA', 'DH_DSA', 'EC', 'EC_EC', 'EC_RSA')
 
-    def __init__(self, protocol):
+    def __init__(self, protocol, options=None):
         try:
             self._protocol_name = _PROTOCOL_NAMES[protocol]
         except KeyError:
             raise ValueError("invalid protocol version")
 
+        # psd: I think this is a bug because protocol is a string and PROTOCOL_SSLv23 is an int
+        # however when I fixed it twisted blew up, so it's a "load bearing bug" -_-
         if protocol == PROTOCOL_SSLv23:  # darjus: at least my Java does not let me use v2
             self._protocol_name = 'SSL'
 
@@ -971,7 +977,33 @@ class SSLContext(object):
         self._check_hostname = False
 
         # defaults from _ssl.c
-        self.options = OP_ALL | OP_NO_SSLv2 | OP_NO_SSLv3
+        if options:
+            self.options = options
+        else:
+            # secure defaults
+            self.options = OP_ALL | OP_NO_SSLv2 | OP_NO_SSLv3 | OP_NO_TLSv1 | OP_NO_TLSv1_1
+
+        protocols = _PROTOCOL_NAMES.values()
+        # psd: assuming darjus is right I should do the same change here
+        protocols.remove(_PROTOCOL_NAMES[PROTOCOL_SSLv23])  # darjus: at least my Java does not let me use v2
+        protocols.append('SSL')
+        if self.options == OP_ALL:
+            ## just use the whole list of _PROTOCOL_NAMES possibly in the future grab the JVM defaults
+            pass
+        else:
+            if OP_NO_SSLv2 & self.options:
+                protocols.remove('SSL')  # darjus: at least my Java does not let me use v2
+            if OP_NO_SSLv3 & self.options:
+                protocols.remove(_PROTOCOL_NAMES[PROTOCOL_SSLv3])
+            if OP_NO_TLSv1 & self.options:
+                protocols.remove(_PROTOCOL_NAMES[PROTOCOL_TLSv1])
+            if OP_NO_TLSv1_1 & self.options:
+                protocols.remove(_PROTOCOL_NAMES[PROTOCOL_TLSv1_1])
+            if OP_NO_TLSv1_2 & self.options:
+                protocols.remove(_PROTOCOL_NAMES[PROTOCOL_TLSv1_2])
+
+        self.allowed_protocols = protocols
+
         self._verify_flags = VERIFY_DEFAULT
         self._verify_mode = CERT_NONE
         self._ciphers = None
@@ -1015,6 +1047,10 @@ class SSLContext(object):
 
         # addr could be ipv6, only extract relevant parts
         engine = context.createSSLEngine((hostname or addr[0]), addr[1])
+        params = engine.getSSLParameters()
+        params.setProtocols(self.allowed_protocols)
+
+        engine.setSSLParameters(params)
 
         # apparently this can be used to enforce hostname verification
         if hostname is not None and self._check_hostname:
