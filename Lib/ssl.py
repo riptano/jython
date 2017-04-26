@@ -3,7 +3,7 @@ from collections import namedtuple
 import errno
 from java.security.cert import CertificateFactory
 import uuid
-from java.io import BufferedInputStream
+from java.io import BufferedInputStream, PrintWriter, StringWriter
 from java.security import KeyStore, KeyStoreException
 from java.security.cert import CertificateParsingException
 from javax.net.ssl import TrustManagerFactory
@@ -56,7 +56,7 @@ from javax.security.auth.x500 import X500Principal
 from org.ietf.jgss import Oid
 
 log = logging.getLogger("_socket")
-
+ssl_log = logging.getLogger("jython_ssl")
 
 # Pretend to be OpenSSL
 OPENSSL_VERSION = "OpenSSL 1.0.0 (as emulated by Java SSL)"
@@ -149,6 +149,19 @@ _cert_name_types = [
     "uniformResourceIdentifier",
     "ipAddress",
     "registeredID"]
+
+def _debug():
+    FORMAT = '%(message)s'
+    debug_sh = logging.StreamHandler()
+    debug_sh.setFormatter(logging.Formatter(FORMAT))
+    ssl_log.addHandler(debug_sh)
+    ssl_log.setLevel(level=logging.DEBUG)
+
+def log_stack(throwable, the_log):
+    """Threadsafe way to log a Java stacktrace"""
+    writer = StringWriter()
+    throwable.printStackTrace(PrintWriter(writer))
+    the_log.debug(writer.toString())
 
 def _str_or_unicode(s):
     try:
@@ -600,13 +613,14 @@ class SSLSocket(object):
 
         def handshake_step(result):
             log.debug("SSL handshaking completed %s", result, extra={"sock": self._sock})
-
             if not hasattr(self._sock, "active_latch"):
                 log.debug("Post connect step", extra={"sock": self._sock})
                 self._sock._post_connect()
                 self._sock._unlatch()
             self._sslobj = object()  # we have now handshaked
             self._notify_selectors()
+            if not result.isSuccess() and result.cause():
+                log_stack(result.cause(), ssl_log)
 
         if self.ssl_handler is None:
             self.ssl_handler = RaceFreeSslHandler(self.engine)
