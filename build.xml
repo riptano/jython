@@ -132,7 +132,7 @@ oracle.jar=C:/workspace/HEAD/for_development/bisdevsrv28/jboss/server/infra/lib/
         <property name="compile.dir" value="${output.dir}/classes" />
         <property name="exposed.dir" value="${output.dir}/exposed" />
         <property name="gensrc.dir" value="${output.dir}/gensrc" />
-        <property name="dist.dir" value="${work.dir}/dist" />
+        <property name="dist.dir" value="/jython" />
         <property name="apidoc.dir" value="${dist.dir}/Doc/javadoc" />
         <property name="junit.reports" value="${dist.dir}/testreports" />
         <property name="junit.htmlreports" value="${dist.dir}/test-html-reports" />
