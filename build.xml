@@ -132,7 +132,7 @@ oracle.jar=C:/workspace/HEAD/for_development/bisdevsrv28/jboss/server/infra/lib/
         <property name="compile.dir" value="${output.dir}/classes" />
         <property name="exposed.dir" value="${output.dir}/exposed" />
         <property name="gensrc.dir" value="${output.dir}/gensrc" />
-        <property name="dist.dir" value="/jython" />
+        <property name="dist.dir" value="${work.dir}/dist" />
         <property name="apidoc.dir" value="${dist.dir}/Doc/javadoc" />
         <property name="junit.reports" value="${dist.dir}/testreports" />
         <property name="junit.htmlreports" value="${dist.dir}/test-html-reports" />
@@ -608,7 +608,7 @@ The readme text for the next release will be like:
             <zipfileset src="extlibs/jffi-x86_64-OpenBSD.jar"/>
             <zipfileset src="extlibs/jffi-x86_64-SunOS.jar"/>
             <zipfileset src="extlibs/jffi-x86_64-Windows.jar"/>
-	    <!-- remainder of JNR, JFFI -->
+            <!-- remainder of JNR, JFFI -->
             <zipfileset src="extlibs/jffi-1.2.10.jar"/>
             <zipfileset src="${extlibs.dir}/jnr-ffi-2.0.7.jar"/>
             <zipfileset src="${extlibs.dir}/jnr-netdb-1.1.5.jar"/>
@@ -657,6 +657,12 @@ The readme text for the next release will be like:
                 </section>
             </manifest>
         </jar>
+        <taskdef classpath="extlibs/ant-shade-task-0.1-SNAPSHOT-jar-with-dependencies.jar" resource="org/apache/tools/ant/taskdefs/shade.properties" />
+        <shade jar="${dist.dir}/${jython.standalone.jar}" uberJar="${dist.dir}/jython-shaded.jar">
+            <relocation shadedPattern="org.shaded.">
+                <exclude value="org.python.**"/>
+            </relocation>
+        </shade>
     </target>
 
     <target name="jar" depends="compile,expose">
