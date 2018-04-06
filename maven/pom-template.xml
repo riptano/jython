@@ -28,6 +28,11 @@
             <name>datastax-releases</name>
             <url>https://repo.datastax.com/datastax-public-releases-local</url>
         </repository>
+        <snapshotRepository>
+            <id>artifactory</id>
+            <name>datastax-snapshots</name>
+            <url>http://repo.datastax.com/datastax-snapshots-local</url>
+        </snapshotRepository>
     </distributionManagement>
     <scm>
         <connection>scm:hg:http://hg.python.org/jython</connection>
