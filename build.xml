@@ -588,32 +588,39 @@ The readme text for the next release will be like:
             <rule pattern="io.netty.**" result="org.python.netty.@1"/>
             <zipfileset src="${extlibs.dir}/java-sizeof-0.0.5.jar"/>
             <rule pattern="com.carrotsearch.sizeof.**" result="org.python.sizeof.@1"/>
-            <!-- these stub jars are pre-built in https://github.com/jnr/jffi/tree/master/archive
-                and rarely if ever change -->
-            <zipfileset src="extlibs/jffi-arm-Linux.jar"/>
-            <zipfileset src="extlibs/jffi-Darwin.jar"/>
-            <zipfileset src="extlibs/jffi-i386-FreeBSD.jar"/>
-            <zipfileset src="extlibs/jffi-i386-Linux.jar"/>
-            <zipfileset src="extlibs/jffi-i386-OpenBSD.jar"/>
-            <zipfileset src="extlibs/jffi-i386-SunOS.jar"/>
-            <zipfileset src="extlibs/jffi-i386-Windows.jar"/>
-            <zipfileset src="extlibs/jffi-ppc-AIX.jar"/>
-            <zipfileset src="extlibs/jffi-ppc-Linux.jar"/>
-            <zipfileset src="extlibs/jffi-ppc64-Linux.jar"/>
-            <zipfileset src="extlibs/jffi-s390x-Linux.jar"/>
-            <zipfileset src="extlibs/jffi-sparc-SunOS.jar"/>
-            <zipfileset src="extlibs/jffi-sparcv9-SunOS.jar"/>
-            <zipfileset src="extlibs/jffi-x86_64-FreeBSD.jar"/>
-            <zipfileset src="extlibs/jffi-x86_64-Linux.jar"/>
-            <zipfileset src="extlibs/jffi-x86_64-OpenBSD.jar"/>
-            <zipfileset src="extlibs/jffi-x86_64-SunOS.jar"/>
-            <zipfileset src="extlibs/jffi-x86_64-Windows.jar"/>
-	    <!-- remainder of JNR, JFFI -->
+            <mappedresources>
+                <resources>
+                    <!-- these stub jars are pre-built in https://github.com/jnr/jffi/tree/master/archive
+                        and rarely if ever change -->
+                    <zipfileset src="extlibs/jffi-arm-Linux.jar"/>
+                    <zipfileset src="extlibs/jffi-Darwin.jar"/>
+                    <zipfileset src="extlibs/jffi-i386-FreeBSD.jar"/>
+                    <zipfileset src="extlibs/jffi-i386-Linux.jar"/>
+                    <zipfileset src="extlibs/jffi-i386-OpenBSD.jar"/>
+                    <zipfileset src="extlibs/jffi-i386-SunOS.jar"/>
+                    <zipfileset src="extlibs/jffi-i386-Windows.jar"/>
+                    <zipfileset src="extlibs/jffi-ppc-AIX.jar"/>
+                    <zipfileset src="extlibs/jffi-ppc-Linux.jar"/>
+                    <zipfileset src="extlibs/jffi-ppc64-Linux.jar"/>
+                    <zipfileset src="extlibs/jffi-s390x-Linux.jar"/>
+                    <zipfileset src="extlibs/jffi-sparc-SunOS.jar"/>
+                    <zipfileset src="extlibs/jffi-sparcv9-SunOS.jar"/>
+                    <zipfileset src="extlibs/jffi-x86_64-FreeBSD.jar"/>
+                    <zipfileset src="extlibs/jffi-x86_64-Linux.jar"/>
+                    <zipfileset src="extlibs/jffi-x86_64-OpenBSD.jar"/>
+                    <zipfileset src="extlibs/jffi-x86_64-SunOS.jar"/>
+                    <zipfileset src="extlibs/jffi-x86_64-Windows.jar"/>
+                </resources>
+                <globmapper from="jni/*" to="org/python/jni/*" />
+            </mappedresources>
+            <!-- remainder of JNR, JFFI -->
             <zipfileset src="extlibs/jffi-1.2.10.jar"/>
+            <rule pattern="jni.**" result="org.python.jni.@1"/>
             <zipfileset src="${extlibs.dir}/jnr-ffi-2.0.7.jar"/>
             <zipfileset src="${extlibs.dir}/jnr-netdb-1.1.5.jar"/>
             <zipfileset src="${extlibs.dir}/jnr-posix-3.0.23.jar"/>
             <zipfileset src="${extlibs.dir}/jnr-constants-0.9.0.jar"/>
+            <rule pattern="jnr.**" result="org.python.jnr.@1"/>
             <zipfileset src="extlibs/xercesImpl-2.11.0.jar" excludes="META-INF/services/*"/>
             <rule pattern="org.apache.xml.**" result="org.python.apache.xml.@1"/>
             <rule pattern="org.apache.xerces.**" result="org.python.apache.xerces.@1"/>
