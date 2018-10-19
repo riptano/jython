@@ -1851,7 +1851,7 @@ def gethostbyaddr(name):
 
 
 try:
-    from jnr.netdb import Service, Protocol
+    from org.python.jnr.netdb import Service, Protocol
 
     def getservbyname(service_name, protocol_name=None):
         service = Service.getServiceByName(service_name, protocol_name)
