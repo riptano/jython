@@ -1,4 +1,4 @@
-from jnr.posix import POSIXFactory
+from org.python.jnr.posix import POSIXFactory
 from org.python.modules.posix import PythonPOSIXHandler
 
 
