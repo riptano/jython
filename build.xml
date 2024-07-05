@@ -184,7 +184,7 @@ informix.jar = ../support/jdbc-4.10.12.jar
         <property name="pubs.dir" value="${basedir}/publications" />
     </target>
 
-    <target name="common-jars" depends="common-dirs">
+    <target name="common-jars" depends="common-dirs,common-version-strings">
         <!-- Names of JARs we (may) produce according to target. -->
  
         <!-- Target: jar. Just the Jython code: needs main.classpath to work. For dev & test. -->
@@ -195,9 +195,10 @@ informix.jar = ../support/jdbc-4.10.12.jar
         <property name="jython.deploy.jar" value="jython.jar" />
 
         <!-- Target: jar-standalone. jython.standalone.jar subsumes jython.deploy.jar, and
-             adds the Python library as a resource. A self-contained Python in a JAR. -->
-        <property name="jython.standalone.jar" value="jython-standalone.jar" />
-
+             adds the Python library as a resource. A self-contained Python in a JAR.
+             value="jython-standalone-${jython.release}${snapshot.name}.jar -->
+        <property name="jython.standalone.jar" value="jython-standalone-${jython.release}.jar" />
+        <property name="jython.installer.jar" value="jython-installer-${jython.release}.jar" />
         <!-- Target: all-jars creates these and all the above JARs.  -->
         <property name="jython.javadoc.jar" value="javadoc.jar" />
         <property name="jython.sources.jar" value="sources.jar" />
@@ -1195,9 +1196,9 @@ The text for an official release would continue like ...
         </copy>
 
         <echo>building installer .jar file</echo>
-        <jar destfile="${dist.dir}/jython-installer.jar" update="${jar.update}" roundup="false">
+        <jar destfile="${dist.dir}/${jython.installer.jar}" update="${jar.update}" roundup="false">
             <fileset dir="${dist.dir}">
-                <exclude name="jython-installer.jar"/>
+                <exclude name="${jython.installer.jar}"/>
                 <exclude name="${jython.dev.jar}"/>
                 <exclude name="${jython.standalone.jar}"/>
                 <exclude name="${jython.javadoc.jar}"/>
