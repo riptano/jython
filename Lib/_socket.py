@@ -350,7 +350,17 @@ def _map_exception(java_exception):
             msg = java_exception.message
         py_exception = SSLError(SSL_ERROR_SSL, msg)
     else:
-        mapped_exception = _exception_map.get(java_exception.__class__)
+        # Netty 4.1.6 or higher wraps the connection exception in a
+        # private static class that inherits from ConnectException, so
+        # need to work around.
+        if isinstance(java_exception, java.net.ConnectException):
+            mapped_exception = _exception_map.get(java.net.ConnectException)
+        # Netty AnnotatedNoRouteToHostException extends NoRouteToHostException
+        # so also needs work around.
+        elif isinstance(java_exception, java.net.NoRouteToHostException):
+            mapped_exception = _exception_map.get(java.net.NoRouteToHostException)
+        else:
+            mapped_exception = _exception_map.get(java_exception.__class__)
         if mapped_exception:
             py_exception = mapped_exception(java_exception)
         else:
@@ -380,6 +390,22 @@ def raises_java_exception(method_or_function):
             if is_socket:
                 args[0]._last_error = 0
     return handle_exception
+
+def _fsencode(name):
+    """Ensure that a name that may be given as a unicode object (e.g. returned
+    from Java) is converted to the expected bytes representation using the
+    file-system encoding."""
+    if isinstance(name, unicode):
+        return name.encode(sys.getfilesystemencoding())
+    return name
+
+def _fsdecode(name):
+    """Ensure that a name that may be given as a bytes object (normal for
+    Python) is converted to the Unicode representation (e.g for Java) using the
+    file-system encoding."""
+    if isinstance(name, bytes):
+        return unicode(name, sys.getfilesystemencoding())
+    return name
 
 
 # select support
@@ -797,13 +823,13 @@ class _realsocket(object):
             selector.notify(self, exception=exception, hangup=hangup)
 
     @raises_java_exception
-    def _handle_channel_future(self, future, reason):
+    def _handle_channel_future(self, future, reason, wait=False):
         # All differences between nonblocking vs blocking with optional timeouts
         # is managed by this method.
         #
         # All sockets can be selected on, regardless of blocking/nonblocking state.
         future.addListener(self._notify_selectors)
-        if self.timeout is None:
+        if self.timeout is None or wait:
             log.debug("Syncing on future %s for %s", future, reason, extra={"sock": self})
             return future.sync()
         elif self.timeout:
@@ -1183,6 +1209,7 @@ class _realsocket(object):
         bytes_writable = self.channel.bytesBeforeUnwritable()
         if bytes_writable > len(data):
             bytes_writable = len(data)
+        bytes_writable = min(bytes_writable, 8192)
 
         sent_data = data[:bytes_writable]
 
@@ -1754,7 +1781,12 @@ def getaddrinfo(host, port, family=AF_UNSPEC, socktype=0, proto=0, flags=0):
         hosts = [host]
     results = []
     for h in hosts:
-        for a in java.net.InetAddress.getAllByName(h):
+        try:
+            all_by_name = java.net.InetAddress.getAllByName(h)
+        except java.net.UnknownHostException:
+            raise gaierror(errno.ENOEXEC, 'nodename nor servname provided, or not known')
+
+        for a in all_by_name:
             if len([f for f in filter_fns if f(a)]):
                 family = {java.net.Inet4Address: AF_INET, java.net.Inet6Address: AF_INET6}[a.getClass()]
                 if flags & AI_CANONNAME:
@@ -1857,11 +1889,13 @@ def getfqdn(name=None):
 
 @raises_java_exception
 def gethostname():
-    return str(InetAddress.getLocalHost().getHostName())
+    """Return FS-encoded local host name."""
+    return _fsencode(InetAddress.getLocalHost().getHostName())
 
 @raises_java_exception
 def gethostbyname(name):
-    return str(InetAddress.getByName(name).getHostAddress())
+    """Return IP address as string from FS-decoded host name."""
+    return str(InetAddress.getByName(_fsdecode(name)).getHostAddress())
 
 #
 # Skeleton implementation of gethostbyname_ex
@@ -2031,7 +2065,7 @@ class _fileobject(object):
         return self._sock.fileno()
 
     def write(self, data):
-        data = str(data) # XXX Should really reject non-string non-buffers
+        data = str(data) # XXX Should really reject non-byte non-buffers
         if not data:
             return
         self._wbuf.append(data)

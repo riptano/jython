@@ -1,4 +1,5 @@
 import array
+import os
 import unittest
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from org.python.tests.RedundantInterfaceDeclarations import (Implementation, Ext
 from org.python.tests.multihidden import BaseConnection
 
 class VisibilityTest(unittest.TestCase):
+
     def test_invisible(self):
         for item in dir(Invisible):
             self.assert_(not item.startswith("package"))
@@ -178,6 +180,7 @@ class VisibilityTest(unittest.TestCase):
 
 
 class JavaClassTest(unittest.TestCase):
+
     def test_class_methods_visible(self):
         self.assertFalse(HashMap.isInterface(),
                 'java.lang.Class methods should be visible on Class instances')
@@ -198,6 +201,7 @@ class JavaClassTest(unittest.TestCase):
         self.assertEquals(3, s.b, "Defined fields should take precedence")
 
 class CoercionTest(unittest.TestCase):
+
     def test_int_coercion(self):
         c = Coercions()
         self.assertEquals("5", c.takeInt(5))
@@ -234,12 +238,41 @@ class CoercionTest(unittest.TestCase):
         self.assertEquals(c.tellClassNameObject(ht), "class java.util.Hashtable")
 
 class RespectJavaAccessibilityTest(unittest.TestCase):
+
+    def setUp(self):
+        self.command = [sys.executable]
+
+    # NOTE: from Java 9 onwards, the JVM will complain about (but by default still allow)
+    # reflective access that does not respect Java accessibility rules. In order to avoid:
+    #   WARNING: Illegal reflective access by org.python.core.PyJavaType ... 
+    # and a threat that "illegal access operations will be denied in a future release",
+    # we add --add-opens specifications for all the packages needed in this test.
+
+    def add_opens(self, module, package):
+        self.command.append("-J--add-opens")
+        self.command.append("-J{}/{}=ALL-UNNAMED".format(module, package))
+
     def run_accessibility_script(self, script, error=AttributeError):
         fn = test_support.findfile(script)
+        # Check expected error in current environment
         self.assertRaises(error, execfile, fn)
-        self.assertEquals(subprocess.call([sys.executable, "-J-Dpython.cachedir.skip=true",
-            "-J-Dpython.security.respectJavaAccessibility=false", fn]),
-            0)
+
+        # Prepare to break the rules
+        self.command.append("-J-Dpython.cachedir.skip=true")
+        self.command.append("-J-Dpython.security.respectJavaAccessibility=false")
+        if test_support.get_java_version() >= (9,):
+            # See all the cases for which we have forgotten --add-opens
+            self.command.append("-J--illegal-access=warn")
+            # Open the packages used in the scripts
+            self.add_opens("java.desktop", "java.awt.geom")
+            for package in ("lang", "util", "nio", "nio.charset"):
+                self.add_opens("java.base", "java." + package)
+            if test_support.get_java_version() >= (12,):
+                self.add_opens("java.base", "java.lang.constant")
+
+        self.command.append(fn)
+        self.assertEquals(subprocess.call(self.command), 0)
+
 
     def test_method_access(self):
         self.run_accessibility_script("call_protected_method.py")
@@ -254,8 +287,11 @@ class RespectJavaAccessibilityTest(unittest.TestCase):
         self.run_accessibility_script("call_overridden_method.py")
 
 class ClassloaderTest(unittest.TestCase):
+
     def test_loading_classes_without_import(self):
-        cl = test_support.make_jar_classloader("../callbacker_test.jar")
+        # Look for the Callbacker class ONLY in the special JAR
+        jar = os.path.join(sys.prefix, "callbacker_test.jar")
+        cl = test_support.make_jar_classloader(jar, None)
         X = cl.loadClass("org.python.tests.Callbacker")
         called = []
         class Blah(X.Callback):
@@ -265,11 +301,13 @@ class ClassloaderTest(unittest.TestCase):
         self.assertEquals(None, called[0])
 
 def test_main():
-    test_support.run_unittest(VisibilityTest,
+    test_support.run_unittest(
+            VisibilityTest,
             JavaClassTest,
             CoercionTest,
             RespectJavaAccessibilityTest,
-            ClassloaderTest)
+            ClassloaderTest
+        )
 
 if __name__ == "__main__":
     test_main()

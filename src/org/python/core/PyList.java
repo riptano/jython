@@ -43,10 +43,10 @@ public class PyList extends PySequenceList {
         list = Generic.list();
     }
 
-    private PyList(List list, boolean convert) {
+    private PyList(List<?> list, boolean convert) {
         super(TYPE);
         if (!convert) {
-            this.list = list;
+            this.list = (List<PyObject>) list;
         } else {
             this.list = Generic.list();
             for (Object o : list) {
@@ -72,7 +72,7 @@ public class PyList extends PySequenceList {
         this(TYPE, elements);
     }
 
-    public PyList(Collection c) {
+    public PyList(Collection<?> c) {
         this(TYPE, c);
     }
 
@@ -106,7 +106,7 @@ public class PyList extends PySequenceList {
     // refactor and put in Py presumably;
     // presumably we can consume an arbitrary iterable too!
     private static void addCollection(List<PyObject> list, Collection<Object> seq) {
-        Map<Long, PyObject> seen = new HashMap();
+        Map<Long, PyObject> seen = new HashMap<>();
         for (Object item : seq) {
             long id = Py.java_obj_id(item);
             PyObject seen_obj = seen.get(id);
@@ -118,6 +118,7 @@ public class PyList extends PySequenceList {
         }
     }
 
+    @SuppressWarnings("unchecked")
     @ExposedNew
     @ExposedMethod(doc = BuiltinDocs.list___init___doc)
     final void list___init__(PyObject[] args, String[] kwds) {
@@ -141,7 +142,7 @@ public class PyList extends PySequenceList {
             list.addAll(((PyTuple) seq).getList());
         } else if (seq.getClass().isAssignableFrom(Collection.class)) {
             System.err.println("Adding from collection");
-            addCollection(list, (Collection)seq);
+            addCollection(list, (Collection<Object>) seq);
         } else {
             for (PyObject item : seq.asIterable()) {
                 append(item);
@@ -169,6 +170,7 @@ public class PyList extends PySequenceList {
         remove(start, stop);
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     protected void setslice(int start, int stop, int step, PyObject value) {
         if (stop < start) {
@@ -182,11 +184,11 @@ public class PyList extends PySequenceList {
         } else if (value instanceof PySequence) {
             setsliceIterator(start, stop, step, value.asIterable().iterator());
         } else if (value instanceof List) {
-                setsliceList(start, stop, step, (List)value);
+                setsliceList(start, stop, step, (List<Object>)value);
         } else {
             Object valueList = value.__tojava__(List.class);
             if (valueList != null && valueList != Py.NoConversion) {
-                setsliceList(start, stop, step, (List)valueList);
+                setsliceList(start, stop, step, (List<Object>)valueList);
             } else {
                 value = new PyList(value);
                 setsliceIterator(start, stop, step, value.asIterable().iterator());
@@ -194,7 +196,7 @@ public class PyList extends PySequenceList {
         }
     }
 
-    final private void setsliceList(int start, int stop, int step, List value) {
+    final private void setsliceList(int start, int stop, int step, List<Object> value) {
         if (step == 1) {
             list.subList(start, stop).clear();
             int n = value.size();
@@ -333,7 +335,7 @@ public class PyList extends PySequenceList {
 
         int newSize = size * count;
         if (list instanceof ArrayList) {
-            ((ArrayList) list).ensureCapacity(newSize);
+            ((ArrayList<PyObject>) list).ensureCapacity(newSize);
         }
         List<PyObject> oldList = new ArrayList<PyObject>(list);
         for (int i = 1; i < count; i++) {
@@ -379,8 +381,8 @@ public class PyList extends PySequenceList {
         PyList sum = null;
         if (o instanceof PySequenceList && !(o instanceof PyTuple)) {
             if (o instanceof PyList) {
-                List oList = ((PyList) o).list;
-                List newList = new ArrayList(list.size() + oList.size());
+                List<PyObject> oList = ((PyList) o).list;
+                ArrayList<PyObject> newList = new ArrayList<>(list.size() + oList.size());
                 newList.addAll(list);
                 newList.addAll(oList);
                 sum = fromList(newList);
@@ -389,11 +391,12 @@ public class PyList extends PySequenceList {
             // also support adding java lists (but not PyTuple!)
             Object oList = o.__tojava__(List.class);
             if (oList != Py.NoConversion && oList != null) {
-                List otherList = (List) oList;
+                @SuppressWarnings("unchecked")
+                List<Object> otherList = (List<Object>) oList;
                 sum = new PyList();
                 sum.list_extend(this);
-                for (Iterator i = otherList.iterator(); i.hasNext();) {
-                    sum.add(i.next());
+                for (Object ob: otherList) {
+                    sum.add(ob);
                 }
             }
         }
@@ -406,6 +409,7 @@ public class PyList extends PySequenceList {
     }
 
     //XXX: needs __doc__
+    @SuppressWarnings("unchecked")
     @ExposedMethod(type = MethodType.BINARY)
     final synchronized PyObject list___radd__(PyObject o) {
         // Support adding java.util.List, but prevent adding PyTuple.
@@ -417,7 +421,7 @@ public class PyList extends PySequenceList {
         Object oList = o.__tojava__(List.class);
         if (oList != Py.NoConversion && oList != null) {
             sum = new PyList();
-            sum.addAll((List) oList);
+            sum.addAll((List<PyObject>) oList);
             sum.extend(this);
         }
         return sum;
@@ -798,7 +802,11 @@ public class PyList extends PySequenceList {
         if (reverse) {
             Collections.reverse(list); // maintain stability of sort by reversing first
         }
-        Collections.sort(list, new PyObjectDefaultComparator(this));
+        final PyObjectDefaultComparator comparator = new PyObjectDefaultComparator(this);
+        Collections.sort(list, comparator);
+        if (comparator.raisedException()) {
+            throw comparator.getRaisedException();
+        }
         if (reverse) {
             Collections.reverse(list); // maintain stability of sort by reversing first
         }
@@ -808,20 +816,33 @@ public class PyList extends PySequenceList {
     private static class PyObjectDefaultComparator implements Comparator<PyObject> {
 
         private final PyList list;
+        private PyException comparatorException;
 
         PyObjectDefaultComparator(PyList list) {
             this.list = list;
         }
 
+        public PyException getRaisedException() {
+            return comparatorException;
+        }
+
+        public boolean raisedException() {
+            return comparatorException != null;
+        }
+
+        @Override
         public int compare(PyObject o1, PyObject o2) {
             // PEP 207 specifies that sort should only depend on "less-than" (Issue #1767)
-            int result;
-            if (o1._lt(o2).__nonzero__()) {
-                result = -1;
-            } else if (o2._lt(o1).__nonzero__()) {
-                result = 1;
-            } else {
-                result = 0;
+            int result = 0; // If exception is raised return objects are equal
+            try {
+                if (o1._lt(o2).__nonzero__()) {
+                    result = -1;
+                } else if (o2._lt(o1).__nonzero__()) {
+                    result = 1;
+                }
+            } catch (PyException pye) {
+                // #2399 Stash the exception so we can rethrow it later, and allow the sort to continue
+                comparatorException = pye;
             }
             if (this.list.gListAllocatedStatus >= 0) {
                 throw Py.ValueError("list modified during sort");
@@ -829,6 +850,7 @@ public class PyList extends PySequenceList {
             return result;
         }
 
+        @Override
         public boolean equals(Object o) {
             if (o == this) {
                 return true;
@@ -849,8 +871,11 @@ public class PyList extends PySequenceList {
         if (reverse) {
             Collections.reverse(list); // maintain stability of sort by reversing first
         }
-        PyObjectComparator c = new PyObjectComparator(this, compare);
-        Collections.sort(list, c);
+        final PyObjectComparator comparator = new PyObjectComparator(this, compare);
+        Collections.sort(list, comparator);
+        if (comparator.raisedException()) {
+            throw comparator.getRaisedException();
+        }
         if (reverse) {
             Collections.reverse(list);
         }
@@ -861,20 +886,37 @@ public class PyList extends PySequenceList {
 
         private final PyList list;
         private final PyObject cmp;
+        private PyException comparatorException;
 
         PyObjectComparator(PyList list, PyObject cmp) {
             this.list = list;
             this.cmp = cmp;
         }
 
+        public PyException getRaisedException() {
+            return comparatorException;
+        }
+
+        public boolean raisedException() {
+            return comparatorException != null;
+        }
+
+        @Override
         public int compare(PyObject o1, PyObject o2) {
-            int result = cmp.__call__(o1, o2).asInt();
+            int result = 0; // If exception is raised return objects are equal
+            try {
+                result = cmp.__call__(o1, o2).asInt();
+            } catch (PyException pye) {
+                // #2399 Stash the exception so we can rethrow it later, and allow the sort to continue
+                comparatorException = pye;
+            }
             if (this.list.gListAllocatedStatus >= 0) {
                 throw Py.ValueError("list modified during sort");
             }
             return result;
         }
 
+        @Override
         public boolean equals(Object o) {
             if (o == this) {
                 return true;
@@ -958,7 +1000,7 @@ public class PyList extends PySequenceList {
             Collections.reverse(decorated);
         }
         if (list instanceof ArrayList) {
-            ((ArrayList) list).ensureCapacity(size);
+            ((ArrayList<PyObject>) list).ensureCapacity(size);
         }
         for (KV kv : decorated) {
             list.add(kv.value);
@@ -1063,8 +1105,8 @@ public class PyList extends PySequenceList {
     }
 
     @Override
-    public Iterator iterator() {
-        return new Iterator() {
+    public Iterator<Object> iterator() {
+        return new Iterator<Object>() {
 
             private final Iterator<PyObject> iter = list.iterator();
 

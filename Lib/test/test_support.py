@@ -55,9 +55,27 @@ is_jython_nt = is_jython and (os._name == 'nt')
 is_jython_posix = is_jython and (os._name == 'posix')
 
 if is_jython:
-    def get_java_version():
-        # returns (1, 9) for Java 9, etc
-        return tuple((int(x) for x in platform.java_ver()[0].split('.')[0:2]))
+    def get_java_version(version=None):
+        """return a tuple of int encoding the Java version (as in java.version).
+
+        "1.8.0_121" -> (1, 8, 0, 121)
+        "9.0.4" -> (9, 0, 4)
+        "11" -> (11,)
+        "12-ea" -> (12,)
+        This parses strings (java.version properties) that conform to:
+        http://www.oracle.com/technetwork/java/javase/versioning-naming-139433.html
+        and http://openjdk.java.net/jeps/223 (but doesn't validate them).
+        """
+        if version is None:
+            version = platform.java_ver()[0]
+        version = version.split('-')[0]     # discard optional pre-release indicator
+        parts = version.split('_')          # pre-JEP-223 format like 1.8.0_121
+        parts[0:1] = parts[0].split('.')
+        try:
+            return tuple(int(x) for x in parts)
+        except:
+            return ()
+
 
 class Error(Exception):
     """Base class for regression test exceptions."""
@@ -477,11 +495,16 @@ def u(s):
     return unicode(s, 'unicode-escape')
 
 if is_jython:
-    def make_jar_classloader(jar):
+    def make_jar_classloader(jar, parent=False):
         import os
         from java.net import URL, URLClassLoader
+        from java.io import File
 
-        url = URL('jar:file:%s!/' % jar)
+        if isinstance(jar, bytes): # Java will expect a unicode file name
+            jar = jar.decode(sys.getfilesystemencoding())
+        jar_url = File(jar).toURI().toURL().toString()
+        url = URL(u'jar:%s!/' % jar_url)
+
         if is_jython_nt:
             # URLJarFiles keep a cached open file handle to the jar even
             # after this ClassLoader is GC'ed, disallowing Windows tests
@@ -493,13 +516,16 @@ if is_jython:
                 # better fix
                 conn.setDefaultUseCaches(False)
 
-        return URLClassLoader([url])
+        if parent is False:
+            return URLClassLoader([url])
+        else:
+            return URLClassLoader([url], parent)
 
 # Filename used for testing
 if is_jython:
     # Jython disallows @ in module names
     TESTFN = '$test'
-    TESTFN_UNICODE = "$test-\xe0\xf2"
+    TESTFN_UNICODE = u"$test-\u87d2\u86c7" # = test python (Chinese)
     TESTFN_ENCODING = sys.getfilesystemencoding()
 elif os.name == 'riscos':
     TESTFN = 'testfile'
@@ -564,6 +590,10 @@ del fp
 # Disambiguate TESTFN for parallel testing, while letting it remain a valid
 # module name.
 TESTFN = "{}_{}_tmp".format(TESTFN, "1") #XXX "1" is a dummy for os.getpid()
+
+# Define the URL of a dedicated HTTP server for the network tests.
+# The URL must use clear-text HTTP: no redirection to encrypted HTTPS.
+TEST_HTTP_URL = "http://www.pythontest.net"
 
 # Save the initial cwd
 SAVEDCWD = os.getcwd()
@@ -1097,6 +1127,35 @@ def run_with_locale(catstr, *locales):
         inner.__doc__ = func.__doc__
         return inner
     return decorator
+
+#=======================================================================
+# Reset locale to C / POSIX locale. In Jython to date the default locale
+# has been Locale.getDefaultLocale(), ie OS determined
+# The new locale.setlocale() support is in beta and off by default,
+# but some tests need the changes it introduces to pass.
+# It requires certain "startup" initialization corresponding to
+# -J-Dpython.locale.control=settable which is hard to simulate in a unit
+# test. To see the calling test pass without the reload throat-clearing,
+# invoke Jython with python.locale.control=settable on the command line, 
+# in either direct or regrtest flavours.
+# Use of this function can be removed from most tests once 
+# locale.setlocale() support is on by default
+def force_reset_locale(initialize=True):
+    import locale
+    if initialize:
+        from datetime import datetime
+        import time
+        from java.lang import System
+        System.setProperty('python.locale.control','settable')
+        import _locale
+        reload(_locale)
+        reload(locale)
+        # Trigger date format cache reload - need lang change
+        import _strptime
+        locale.setlocale(locale.LC_ALL,'de_DE')
+        _strptime._strptime('16', '%d') # numbers more portable hopefully
+    locale.setlocale(locale.LC_ALL,'C')
+
 
 #=======================================================================
 # Big-memory-test support. Separate from 'resources' because memory use should be configurable.

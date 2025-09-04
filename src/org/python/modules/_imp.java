@@ -1,7 +1,13 @@
 
 package org.python.modules;
 
-import org.python.core.__builtin__;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 import org.python.core.Py;
 import org.python.core.PyFile;
 import org.python.core.PyList;
@@ -10,10 +16,8 @@ import org.python.core.PyObject;
 import org.python.core.PyString;
 import org.python.core.PySystemState;
 import org.python.core.PyTuple;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import org.python.core.__builtin__;
+import org.python.core.imp;
 
 /*
  * A bogus implementation of the CPython builtin module "imp".
@@ -35,6 +39,8 @@ public class _imp {
     public static final int C_BUILTIN = 6;
     public static final int PY_FROZEN = 7;
     public static final int IMP_HOOK = 9;
+
+    private static Logger logger = Logger.getLogger("org.python.import");
 
     private static class ModuleInfo {
         PyObject file;
@@ -60,21 +66,21 @@ public class _imp {
     }
 
     private static boolean caseok(File file, String filename) {
-        return org.python.core.imp.caseok(file, filename);
+        return imp.caseok(file, filename);
     }
 
     /**
      * This needs to be consolidated with the code in (@see org.python.core.imp).
      *
      * @param name module name
-     * @param entry a path String
+     * @param entry a path String (Unicode file or directory name)
      * @param findingPackage if looking for a package only try to locate __init__
      * @return null if no module found otherwise module information
      */
     static ModuleInfo findFromSource(String name, String entry, boolean findingPackage,
                                      boolean preferSource) {
         String sourceName = "__init__.py";
-        String compiledName = "__init__$py.class";
+        String compiledName = imp.makeCompiledFilename(sourceName);
         String directoryName = PySystemState.getPathLazy(entry);
         // displayDirName is for identification purposes: when null it
         // forces java.io.File to be a relative path (e.g. foo/bar.py
@@ -94,9 +100,9 @@ public class _imp {
                 return new ModuleInfo(Py.None, new File(displayDirName, name).getPath(),
                                       "", "", PKG_DIRECTORY);
             } else {
-                Py.writeDebug("import", "trying source " + dir.getPath());
+                logger.log(Level.FINE, "# trying directory {0}", dir.getPath());
                 sourceName = name + ".py";
-                compiledName = name + "$py.class";
+                compiledName = imp.makeCompiledFilename(sourceName);
                 sourceFile = new File(directoryName, sourceName);
                 compiledFile = new File(directoryName, compiledName);
             }
@@ -104,7 +110,7 @@ public class _imp {
 
         if (sourceFile.isFile() && caseok(sourceFile, sourceName)) {
             if (!preferSource && compiledFile.isFile() && caseok(compiledFile, compiledName)) {
-                Py.writeDebug("import", "trying precompiled " + compiledFile.getPath());
+                logger.log(Level.FINE, "# trying precompiled {0}", compiledFile.getPath());
                 long pyTime = sourceFile.lastModified();
                 long classTime = compiledFile.lastModified();
                 if (classTime >= pyTime) {
@@ -119,7 +125,7 @@ public class _imp {
         }
 
         // If no source, try loading precompiled
-        Py.writeDebug("import", "trying " + compiledFile.getPath());
+        logger.log(Level.FINE, "# trying precompiled {0}", compiledFile.getPath());
         if (compiledFile.isFile() && caseok(compiledFile, compiledName)) {
             return new ModuleInfo(newFile(compiledFile),
                     new File(displayDirName, compiledName).getPath(),
@@ -151,24 +157,46 @@ public class _imp {
             throw Py.TypeError("must be a file-like object");
         }
         PySystemState sys = Py.getSystemState();
-        String compiledFilename =
-                org.python.core.imp.makeCompiledFilename(sys.getPath(filename));
-        mod = org.python.core.imp.createFromSource(modname.intern(), (InputStream)o,
+        String compiledFilename = imp.makeCompiledFilename(sys.getPath(filename));
+        mod = imp.createFromSource(modname.intern(), (InputStream)o,
                                                    filename, compiledFilename);
         PyObject modules = sys.modules;
         modules.__setitem__(modname.intern(), mod);
         return mod;
     }
 
-    public static PyObject load_compiled(String name, String pathname) {
-        return load_compiled(name, pathname, new PyFile(pathname, "rb", -1));
-    }
-
     public static PyObject reload(PyObject module) {
         return __builtin__.reload(module);
     }
 
-    public static PyObject load_compiled(String name, String pathname, PyObject file) {
+    /**
+     * Return a module with the given <code>name</code>, the result of executing the compiled code
+     * at the given <code>pathname</code>. If this path is a <code>PyUnicode</code>, it is used
+     * exactly; if it is a <code>PyString</code> it is taken to be file-system encoded.
+     *
+     * @param name the module name
+     * @param pathname to the compiled module (becomes <code>__file__</code>)
+     * @return the module called <code>name</code>
+     */
+    public static PyObject load_compiled(String name, PyString pathname) {
+        String _pathname = Py.fileSystemDecode(pathname);
+        return _load_compiled(name, _pathname, new PyFile(_pathname, "rb", -1));
+    }
+
+    /**
+     * Return a module with the given <code>name</code>, the result of executing the compiled code
+     * in the given <code>file</code> stream.
+     *
+     * @param name the module name
+     * @param pathname a file path that is not null (becomes <code>__file__</code>)
+     * @param file stream from which the compiled code is taken
+     * @return the module called <code>name</code>
+     */
+    public static PyObject load_compiled(String name, PyString pathname, PyObject file) {
+        return _load_compiled(name, Py.fileSystemDecode(pathname), file);
+    }
+
+    private static PyObject _load_compiled(String name, String pathname, PyObject file) {
         InputStream stream = (InputStream) file.__tojava__(InputStream.class);
         if (stream == Py.NoConversion) {
             throw Py.TypeError("must be a file-like object");
@@ -180,7 +208,7 @@ public class _imp {
         if (sourceName.endsWith("$py.class")) {
             sourceName = sourceName.substring(0, sourceName.length() - 9) + ".py";
         }
-        return org.python.core.imp.loadFromCompiled(name.intern(), stream, sourceName, pathname);
+        return imp.loadFromCompiled(name.intern(), stream, sourceName, pathname);
     }
 
     public static PyObject find_module(String name) {
@@ -189,8 +217,10 @@ public class _imp {
 
     public static PyObject find_module(String name, PyObject path) {
         if (path == Py.None && PySystemState.getBuiltin(name) != null) {
-            return new PyTuple(Py.None, Py.newString(name),
-                               new PyTuple(Py.EmptyString, Py.EmptyString,
+            return new PyTuple(Py.None,
+                               Py.newString(name),
+                               new PyTuple(Py.EmptyString,
+                                           Py.EmptyString,
                                            Py.newInteger(C_BUILTIN)));
         }
 
@@ -198,14 +228,15 @@ public class _imp {
             path = Py.getSystemState().path;
         }
         for (PyObject p : path.asIterable()) {
-            ModuleInfo mi = findFromSource(name, p.toString(), false, true);
+            ModuleInfo mi = findFromSource(name, Py.fileSystemDecode(p), false, true);
             if(mi == null) {
                 continue;
             }
             return new PyTuple(mi.file,
-                               new PyString(mi.filename),
-                               new PyTuple(new PyString(mi.suffix),
-                                           new PyString(mi.mode),
+                               // File names generally expected in the FS encoding
+                               Py.fileSystemEncode(mi.filename),
+                               new PyTuple(Py.newString(mi.suffix),
+                                           Py.newString(mi.mode),
                                            Py.newInteger(mi.type)));
         }
         throw Py.ImportError("No module named " + name);
@@ -215,7 +246,8 @@ public class _imp {
         PyObject mod = Py.None;
         PySystemState sys = Py.getSystemState();
         int type = data.__getitem__(2).asInt();
-        while(mod == Py.None) {
+        String filenameString = Py.fileSystemDecode(filename);
+        while (mod == Py.None) {
             String compiledName;
             switch (type) {
                 case PY_SOURCE:
@@ -225,8 +257,8 @@ public class _imp {
                     }
 
                     // XXX: This should load the accompanying byte code file instead, if it exists
-                    String resolvedFilename = sys.getPath(filename.toString());
-                    compiledName = org.python.core.imp.makeCompiledFilename(resolvedFilename);
+                    String resolvedFilename = sys.getPath(filenameString);
+                    compiledName = imp.makeCompiledFilename(resolvedFilename);
                     if (name.endsWith(".__init__")) {
                         name = name.substring(0, name.length() - ".__init__".length());
                     } else if (name.equals("__init__")) {
@@ -239,23 +271,21 @@ public class _imp {
                         mtime = fp.lastModified();
                     }
 
-                    mod = org.python.core.imp.createFromSource(name.intern(),
-                                                               (InputStream)o,
-                                                               filename.toString(),
-                                                               compiledName,
-                                                               mtime);
+                    mod = imp.createFromSource(name.intern(), (InputStream)o,
+                            filenameString, compiledName, mtime);
                     break;
                 case PY_COMPILED:
-                    mod = load_compiled(name, filename.toString(), file);
+                    mod = _load_compiled(name, filenameString, file);
                     break;
                 case PKG_DIRECTORY:
-                    PyModule m = org.python.core.imp.addModule(name);
+                    PyModule m = imp.addModule(name);
                     m.__dict__.__setitem__("__path__", new PyList(new PyObject[] {filename}));
                     m.__dict__.__setitem__("__file__", filename);
-                    ModuleInfo mi = findFromSource(name, filename.toString(), true, true);
+                    ModuleInfo mi = findFromSource(name, filenameString, true, true);
                     type = mi.type;
                     file = mi.file;
-                    filename = new PyString(mi.filename);
+                    filenameString = mi.filename;
+                    filename = Py.newStringOrUnicode(filenameString);
                     break;
                 default:
                     throw Py.ImportError("No module named " + name);
@@ -266,10 +296,19 @@ public class _imp {
         return mod;
     }
 
-    public static PyObject get_magic() {
-	return new PyString("\u0003\u00f3\r\n");
+    /**
+     * Variant of {@link imp#makeCompiledFilename(String)} dealing with encoded bytes. In the context
+     * where this is used from Python, a result in encoded bytes is preferable.
+     */
+    public static PyString makeCompiledFilename(PyString filename) {
+        filename = Py.fileSystemEncode(filename);
+        return Py.newString(imp.makeCompiledFilename(filename.getString()));
     }
-    
+
+    public static PyObject get_magic() {
+        return new PyString("\u0003\u00f3\r\n");
+    }
+
     public static PyObject get_suffixes() {
         return new PyList(new PyObject[] {new PyTuple(new PyString(".py"),
                                                       new PyString("r"),

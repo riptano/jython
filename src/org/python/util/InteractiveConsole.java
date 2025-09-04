@@ -22,13 +22,19 @@ import org.python.core.__builtin__;
 // Based on CPython-1.5.2's code module
 public class InteractiveConsole extends InteractiveInterpreter {
 
-    public static final String CONSOLE_FILENAME = "<stdin>";
+    /**
+     * Note: This field is actually final; don't modify.
+     * <p>
+     * To work around an issue in javadoc with Java 8 we cannot have it final for now, see
+     * <a href="http://bugs.jython.org/issue2539" target="_blank"> issue 2539</a> for details.
+     */
+    public static String CONSOLE_FILENAME = "<stdin>";
 
     public String filename;
 
     /**
      * Construct an interactive console, which will "run" when {@link #interact()} is called. The
-     * name of the console (e.g. in error messages) will be {@value #CONSOLE_FILENAME}.
+     * name of the console (e.g. in error messages) will be {@link #CONSOLE_FILENAME}.
      */
     public InteractiveConsole() {
         this(null, CONSOLE_FILENAME);
@@ -36,7 +42,7 @@ public class InteractiveConsole extends InteractiveInterpreter {
 
     /**
      * Construct an interactive console, which will "run" when {@link #interact()} is called. The
-     * name of the console (e.g. in error messages) will be {@value #CONSOLE_FILENAME}.
+     * name of the console (e.g. in error messages) will be {@link #CONSOLE_FILENAME}.
      *
      * @param locals dictionary to use, or if <code>null</code>, a new empty one will be created
      */
@@ -95,13 +101,14 @@ public class InteractiveConsole extends InteractiveInterpreter {
     }
 
     /**
-     * Returns the banner to print before the first interaction: "Jython <version> on <platform>".
+     * Returns the banner to print before the first interaction:
+     * "{@code Jython <version> on <platform>}".
      *
      * @return the banner.
      */
     public static String getDefaultBanner() {
-        return String
-                .format("Jython %s on %s", PySystemState.version, Py.getSystemState().platform);
+        return String.format("Jython %s on %s", PySystemState.version,
+                Py.getSystemState().platform);
     }
 
     /**

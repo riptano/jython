@@ -378,6 +378,9 @@ print "%%s, %%s, %%s" %% (form.getfirst("spam"), form.getfirst("eggs"),
 
 @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0,
         "This test can't be run reliably as root (issue #13308).")
+@unittest.skipIf((not hasattr(os, 'symlink')) and
+        sys.executable.encode('ascii', 'replace') != sys.executable,
+        "Executable path is not pure ASCII.") # these fail for CPython too
 class CGIHTTPServerTestCase(BaseTestCase):
     class request_handler(NoLogRequestHandler, CGIHTTPRequestHandler):
         pass
@@ -414,10 +417,7 @@ class CGIHTTPServerTestCase(BaseTestCase):
             os.chdir(self.cwd)
             if self.pythonexe != sys.executable:
                 os.remove(self.pythonexe)
-            os.remove(self.file1_path)
-            os.remove(self.file2_path)
-            os.rmdir(self.cgi_dir)
-            os.rmdir(self.parent_dir)
+            test_support.rmtree(self.parent_dir)
         finally:
             BaseTestCase.tearDown(self)
 

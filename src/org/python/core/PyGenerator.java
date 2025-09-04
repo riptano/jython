@@ -33,6 +33,11 @@ public class PyGenerator extends PyIterator implements FinalizableBuiltin {
         FinalizeTrigger.ensureFinalizer(this);
     }
 
+    @ExposedGet(name = "__name__")
+    public String getName() {
+        return gi_code.co_name;
+    }
+
     public PyObject send(PyObject value) {
         return generator_send(value);
     }
@@ -170,6 +175,16 @@ public class PyGenerator extends PyIterator implements FinalizableBuiltin {
             return null;
         }
         return result;
+    }
+
+    @Override
+    public String toString() {
+        return generator_toString();
+    }
+
+    @ExposedMethod(names = "__repr__")
+    final String generator_toString() {
+        return String.format("<generator object %s at %s>", getName(), Py.idstr(this));
     }
 
 

@@ -1,18 +1,27 @@
 // Copyright (c) Corporation for National Research Initiatives
 package org.python.compiler;
 
+import static org.python.core.RegistryKey.PYTHON_CPYTHON;
 import static org.python.util.CodegenUtils.ci;
 import static org.python.util.CodegenUtils.p;
 import static org.python.util.CodegenUtils.sig;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectOutputStream;
+import java.io.File;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.Hashtable;
+import java.util.Stack;
 import java.util.List;
 
 import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodTooLargeException;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.python.antlr.ParseException;
@@ -21,14 +30,18 @@ import org.python.antlr.ast.Num;
 import org.python.antlr.ast.Str;
 import org.python.antlr.ast.Suite;
 import org.python.antlr.base.mod;
+import org.python.core.ClasspathPyImporter;
 import org.python.core.CodeBootstrap;
 import org.python.core.CodeFlag;
 import org.python.core.CodeLoader;
 import org.python.core.CompilerFlags;
+import org.python.core.imp;
 import org.python.core.Py;
 import org.python.core.PyCode;
+import org.python.core.PyBytecode;
 import org.python.core.PyComplex;
 import org.python.core.PyException;
+import org.python.core.PyFile;
 import org.python.core.PyFloat;
 import org.python.core.PyFrame;
 import org.python.core.PyFunctionTable;
@@ -40,6 +53,9 @@ import org.python.core.PyRunnableBootstrap;
 import org.python.core.PyString;
 import org.python.core.PyUnicode;
 import org.python.core.ThreadState;
+import org.python.modules._marshal;
+
+
 
 class PyIntegerConstant extends Constant implements ClassConstants, Opcodes {
 
@@ -76,8 +92,6 @@ class PyIntegerConstant extends Constant implements ClassConstants, Opcodes {
 
 class PyFloatConstant extends Constant implements ClassConstants, Opcodes {
 
-    private static final double ZERO = 0.0;
-
     final double value;
 
     PyFloatConstant(double value) {
@@ -86,7 +100,7 @@ class PyFloatConstant extends Constant implements ClassConstants, Opcodes {
 
     @Override
     void get(Code c) throws IOException {
-        c.ldc(new Double(value));
+        c.ldc(Double.valueOf(value));
         c.invokestatic(p(Py.class), "newFloat", sig(PyFloat.class, Double.TYPE));
     }
 
@@ -121,7 +135,7 @@ class PyComplexConstant extends Constant implements ClassConstants, Opcodes {
 
     @Override
     void get(Code c) throws IOException {
-        c.ldc(new Double(value));
+        c.ldc(Double.valueOf(value));
         c.invokestatic(p(Py.class), "newImaginary", sig(PyComplex.class, Double.TYPE));
     }
 
@@ -297,6 +311,10 @@ class PyCodeConstant extends Constant implements ClassConstants, Opcodes {
             fname = "f$" + id;
         }
         // XXX: is fname needed at all, or should we just use "name"?
+        // It is needed to disambiguate functions and methods with
+        // same name, but in different classes. The function-fields
+        // and PyCode-fields that Jython generates don't use fully
+        // qualified names. So fname is used.
         this.name = fname;
 
         // !classdef only
@@ -338,7 +356,7 @@ class PyCodeConstant extends Constant implements ClassConstants, Opcodes {
         return nameArray;
     }
 
-    private boolean isJavaIdentifier(String s) {
+    public static boolean isJavaIdentifier(String s) {
         char[] chars = s.toCharArray();
         if (chars.length == 0) {
             return false;
@@ -414,6 +432,23 @@ class PyCodeConstant extends Constant implements ClassConstants, Opcodes {
     }
 }
 
+class PyBytecodeConstant extends Constant implements ClassConstants, Opcodes {
+    PyBytecodeConstant(String name, String className, CompilerFlags cflags,
+            Module module) throws Exception {
+        super();
+        this.module = module;
+        this.name = name;
+    }
+
+    @Override
+    void get(Code c) throws IOException {
+        c.getstatic(module.classfile.name, name, ci(PyCode.class));
+    }
+
+    @Override
+    void put(Code c) throws IOException {
+    }
+}
 
 public class Module implements Opcodes, ClassConstants, CompilationContext {
 
@@ -432,6 +467,9 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
 
     /** The pool of Python Constants */
     Hashtable<Constant, Constant> constants;
+
+    /** Table of oversized methods represented as CPython bytecode. */
+    protected Hashtable<String, String> oversized_methods = null;
 
     public Module(String name, String filename, boolean linenumbers) {
         this(name, filename, linenumbers, org.python.core.imp.NO_MTIME);
@@ -495,25 +533,33 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
         return findConstant(new PyLongConstant(value));
     }
 
-    PyCodeConstant codeConstant(mod tree, String name, boolean fast_locals, String className,
+    Constant codeConstant(mod tree, String name, boolean fast_locals, String className,
             boolean classBody, boolean printResults, int firstlineno, ScopeInfo scope,
             CompilerFlags cflags) throws Exception {
         return codeConstant(tree, name, fast_locals, className, null, classBody, printResults,
                 firstlineno, scope, cflags);
     }
 
-    PyCodeConstant codeConstant(mod tree, String name, boolean fast_locals, String className,
+    Constant codeConstant(mod tree, String name, boolean fast_locals, String className,
             Str classDoc, boolean classBody, boolean printResults, int firstlineno,
             ScopeInfo scope, CompilerFlags cflags) throws Exception {
-        PyCodeConstant code = new PyCodeConstant(tree, name, fast_locals, className, classBody, //
+        if (oversized_methods != null && oversized_methods.containsKey(name+firstlineno)) {
+            // For now this only declares the field.
+            // PyBytecodeConstant is just a dummy to allow the caller to work properly.
+            // It is intentionally not added to codes, because it doesn't participate in
+            // FunctionTable and doesn't mess up addFunctions and addConstants this way.
+            PyBytecodeConstant bcode = new PyBytecodeConstant(
+                    oversized_methods.get(name+firstlineno), className, cflags, this);
+            classfile.addField(bcode.name, ci(PyCode.class), ACC_PUBLIC | ACC_STATIC);
+            return bcode;
+        }
+        PyCodeConstant code = new PyCodeConstant(tree, name, fast_locals, className, classBody,
                 printResults, firstlineno, scope, cflags, this);
         codes.add(code);
 
         CodeCompiler compiler = new CodeCompiler(this, printResults);
-
-        Code c = classfile.addMethod(code.fname, //
+        Code c = classfile.addMethod(code.fname,
                 sig(PyObject.class, PyFrame.class, ThreadState.class), ACC_PUBLIC);
-
         compiler.parse(tree, c, fast_locals, className, classDoc, classBody, scope, cflags);
         return code;
     }
@@ -533,7 +579,7 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
     }
 
     public void addMain() throws IOException {
-        Code c = classfile.addMethod("main", //
+        Code c = classfile.addMethod("main",
                 sig(Void.TYPE, String[].class), ACC_PUBLIC | ACC_STATIC);
         c.new_(classfile.name);
         c.dup();
@@ -548,7 +594,7 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
     }
 
     public void addBootstrap() throws IOException {
-        Code c = classfile.addMethod(CodeLoader.GET_BOOTSTRAP_METHOD_NAME, //
+        Code c = classfile.addMethod(CodeLoader.GET_BOOTSTRAP_METHOD_NAME,
                 sig(CodeBootstrap.class), ACC_PUBLIC | ACC_STATIC);
         c.ldc(Type.getType("L" + classfile.name + ";"));
         c.invokestatic(p(PyRunnableBootstrap.class), PyRunnableBootstrap.REFLECTION_METHOD_NAME,
@@ -560,15 +606,14 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
         classfile.addField("self", "L" + classfile.name + ";", ACC_STATIC);
         c.aload(0);
         c.putstatic(classfile.name, "self", "L" + classfile.name + ";");
-        Enumeration e = constants.elements();
+        Enumeration<Constant> e = constants.elements();
 
         while (e.hasMoreElements()) {
-            Constant constant = (Constant)e.nextElement();
+            Constant constant = e.nextElement();
             constant.put(c);
         }
 
-        for (int i = 0; i < codes.size(); i++) {
-            PyCodeConstant pyc = codes.get(i);
+        for (PyCodeConstant pyc: codes) {
             pyc.put(c);
         }
 
@@ -576,29 +621,31 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
     }
 
     public void addFunctions() throws IOException {
-        Code code = classfile.addMethod("call_function", //
+        Code code = classfile.addMethod("call_function",
                 sig(PyObject.class, Integer.TYPE, PyFrame.class, ThreadState.class), ACC_PUBLIC);
 
-        code.aload(0); // this
-        code.aload(2); // frame
-        code.aload(3); // thread state
-        Label def = new Label();
-        Label[] labels = new Label[codes.size()];
-        int i;
-        for (i = 0; i < labels.length; i++) {
-            labels[i] = new Label();
-        }
+        if (!codes.isEmpty()) {
+            code.aload(0); // this
+            code.aload(2); // frame
+            code.aload(3); // thread state
+            Label def = new Label();
+            Label[] labels = new Label[codes.size()];
+            int i;
+            for (i = 0; i < labels.length; i++) {
+                labels[i] = new Label();
+            }
 
-        // Get index for function to call
-        code.iload(1);
-        code.tableswitch(0, labels.length - 1, def, labels);
-        for (i = 0; i < labels.length; i++) {
-            code.label(labels[i]);
-            code.invokevirtual(classfile.name, (codes.get(i)).fname,
-                    sig(PyObject.class, PyFrame.class, ThreadState.class));
-            code.areturn();
+            // Get index for function to call
+            code.iload(1);
+            code.tableswitch(0, labels.length - 1, def, labels);
+            for (i = 0; i < labels.length; i++) {
+                code.label(labels[i]);
+                code.invokevirtual(classfile.name, (codes.get(i)).fname,
+                        sig(PyObject.class, PyFrame.class, ThreadState.class));
+                code.areturn();
+            }
+            code.label(def);
         }
-        code.label(def);
 
         // Should probably throw internal exception here
         code.aconst_null();
@@ -641,7 +688,7 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
         if (!err) {
             try {
                 Py.warning(Py.SyntaxWarning, msg, (sfilename != null) ? sfilename : "?",
-                        node.getLine(), null, Py.None);
+                        node.getLineno(), null, Py.None);
                 return;
             } catch (PyException e) {
                 if (!e.match(Py.SyntaxWarning)) {
@@ -658,10 +705,8 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
                 org.python.core.imp.NO_MTIME);
     }
 
-    public static void compile(mod node, OutputStream ostream, String name, String filename,
-            boolean linenumbers, boolean printResults, CompilerFlags cflags, long mtime)
-            throws Exception {
-        Module module = new Module(name, filename, linenumbers, mtime);
+    protected static void _module_init(mod node, Module module, boolean printResults,
+            CompilerFlags cflags) throws Exception {
         if (cflags == null) {
             cflags = new CompilerFlags();
         }
@@ -670,10 +715,380 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
 
         // Add __doc__ if it exists
 
-        Constant main = module.codeConstant(node, "<module>", false, null, false, //
+        Constant main = module.codeConstant(node, "<module>", false, null, false,
                 printResults, 0, module.getScopeInfo(node), cflags);
         module.mainCode = main;
-        module.write(ostream);
+    }
+
+    // Error message formats required by loadPyBytecode
+    private static String TRIED_CREATE_PYC_MSG =
+            "\nJython tried to create a pyc-file by executing\n    %s\nwhich failed because %s";
+    private static String LARGE_METHOD_MSG = "Module or method too large in `%s`.";
+    private static String PLEASE_PROVIDE_MSG =
+            "\n\nPlease provide a CPython 2.7 bytecode file (.pyc), e.g. run"
+                    + "\n    python -m py_compile %s";
+    private static String CPYTHON_CMD_MSG =
+            "\n\nAlternatively, specify a CPython 2.7 command via the " //
+                    + PYTHON_CPYTHON + " property, e.g.:" //
+                    + "\n    jython -D" + PYTHON_CPYTHON + "=python" //
+                    + "\nor (e.g. for pip) through the environment variable JYTHON_OPTS:" //
+                    + "\n    export JYTHON_OPTS=\"-D" + PYTHON_CPYTHON 
+                    + "=python\"\n";
+
+    private static PyBytecode loadPyBytecode(String filename, boolean try_cpython)
+            throws RuntimeException {
+        if (filename.startsWith(ClasspathPyImporter.PYCLASSPATH_PREFIX)) {
+            ClassLoader cld = Py.getSystemState().getClassLoader();
+            if (cld == null) {
+                cld = imp.getParentClassLoader();
+            }
+            URL py_url =
+                    cld.getResource(filename.replace(ClasspathPyImporter.PYCLASSPATH_PREFIX, ""));
+            if (py_url != null) {
+                filename = py_url.getPath();
+            } else {
+                // Should never happen, but let's play it safe and treat this case.
+                throw new RuntimeException(String.format(LARGE_METHOD_MSG, filename)
+                        + "but couldn't resolve that filename within classpath.\n"
+                        + "Make sure the source file is at a proper location.");
+            }
+        }
+
+        String pyc_filename = filename + "c";
+        File pyc_file = new File(pyc_filename);
+        if (pyc_file.exists()) {
+            PyFile f = new PyFile(pyc_filename, "rb", 4096);
+            byte[] bts = f.read(8).toBytes();
+            int magic = (bts[1] << 8) & 0x0000FF00 | (bts[0] << 0) & 0x000000FF;
+            // int mtime_pyc = (bts[7]<<24) & 0xFF000000 |
+            // (bts[6]<<16) & 0x00FF0000 |
+            // (bts[5]<< 8) & 0x0000FF00 |
+            // (bts[4]<< 0) & 0x000000FF;
+            if (magic != 62211) { // check Python 2.7 bytecode
+                throw new RuntimeException(
+                        String.format(LARGE_METHOD_MSG, filename) //
+                                + "\n'" + pyc_filename + "' is not CPython 2.7 bytecode." //
+                                + String.format(PLEASE_PROVIDE_MSG, filename));
+            }
+            _marshal.Unmarshaller un = new _marshal.Unmarshaller(f);
+            PyObject code = un.load();
+            f.close();
+            if (code instanceof PyBytecode) {
+                return (PyBytecode) code;
+            }
+            throw new RuntimeException(String.format(LARGE_METHOD_MSG, filename) //
+                    + "\n'" + pyc_filename + "' contains invalid bytecode."
+                    + String.format(PLEASE_PROVIDE_MSG, filename));
+
+        } else {
+            String CPython_command = System.getProperty(PYTHON_CPYTHON);
+            if (try_cpython && CPython_command != null) {
+                // check version...
+                String command_ver = CPython_command + " --version";
+                String command = CPython_command + " -m py_compile " + filename;
+                Exception exc = null;
+                int result = 0;
+                String reason;
+                try {
+                    Process p = Runtime.getRuntime().exec(command_ver);
+                    // Python 2.7 writes version to error-stream for some reason:
+                    BufferedReader br =
+                            new BufferedReader(new InputStreamReader(p.getErrorStream()));
+                    String cp_version = br.readLine();
+                    while (br.readLine() != null) {}
+                    br.close();
+                    if (cp_version == null) {
+                        // Also try input-stream as fallback, just in case...
+                        br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                        cp_version = br.readLine();
+                        while (br.readLine() != null) {}
+                        br.close();
+                    }
+                    result = p.waitFor();
+                    if (!cp_version.startsWith("Python 2.7.")) {
+                        reason = cp_version + " has been provided, but 2.7.x is required.";
+                        throw new RuntimeException(String.format(LARGE_METHOD_MSG, filename)
+                                + String.format(TRIED_CREATE_PYC_MSG, command, reason)
+                                + String.format(PLEASE_PROVIDE_MSG, filename) + CPYTHON_CMD_MSG);
+                    }
+                } catch (InterruptedException | IOException e) {
+                    exc = e;
+                }
+
+                if (exc == null && result == 0) {
+                    try {
+                        Process p = Runtime.getRuntime().exec(command);
+                        result = p.waitFor();
+                        if (result == 0) {
+                            return loadPyBytecode(filename, false);
+                        }
+                    } catch (InterruptedException | IOException e) {
+                        exc = e;
+                    }
+                }
+                reason = exc != null ? "of " + exc.toString() : "of a bad return: " + result;
+                String exc_msg = String.format(LARGE_METHOD_MSG, filename)
+                        + String.format(TRIED_CREATE_PYC_MSG, command, reason)
+                        + String.format(PLEASE_PROVIDE_MSG, filename) + CPYTHON_CMD_MSG;
+                throw exc != null ? new RuntimeException(exc_msg, exc)
+                        : new RuntimeException(exc_msg);
+            } else {
+                throw new RuntimeException(String.format(LARGE_METHOD_MSG, filename)
+                        + String.format(PLEASE_PROVIDE_MSG, filename) + CPYTHON_CMD_MSG);
+            }
+        }
+    }
+
+    private static String serializePyBytecode(PyBytecode btcode) throws java.io.IOException {
+        // For some reason we cannot do this using _marshal:
+        /*
+        cStringIO.StringIO buf = cStringIO.StringIO();
+        _marshal.Marshaller marsh = new _marshal.Marshaller(buf);
+        marsh.dump(largest_m_code);
+        String code_str = buf.getvalue().asString();
+
+        _marshal.Unmarshaller un2 = new _marshal.Unmarshaller(cStringIO.StringIO(code_str));
+        PyBytecode code = (PyBytecode) un2.load();
+
+         This says 'ValueError: bad marshal data'
+         Maybe the issue is actually with cStringIO, because bytecode-marshalling uses
+         bytes not directly suitable as String-values. cStringIO does not use Base64 or
+         something, but rather supports only string-compatible data.
+        */
+        // so we use Java-serialization...
+
+        // serialize the object
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        ObjectOutputStream so = new ObjectOutputStream(bo);
+        so.writeObject(btcode);
+        so.flush();
+        // From Java 8 use: String code_str = Base64.getEncoder().encodeToString(bo.toByteArray());
+        String code_str = base64encodeToString(bo.toByteArray());
+        so.close();
+        bo.close();
+        return code_str;
+    }
+
+    /**
+     * Implement a simplified base64 encoding compatible with the decoding in BytecodeLoader. This
+     * encoder adds no '=' padding or line-breaks. equivalent to
+     * {@code binascii.b2a_base64(bytes).rstrip('=\n')}.
+     *
+     * @param data to encode
+     * @return the string encoding the data
+     */
+    private static String base64encodeToString(byte[] data) {
+
+        final int N = data.length;
+        int tail = N % 3;
+
+        StringBuilder chars = new StringBuilder(((N / 3) + 1) * 4);
+
+        // Process bytes in blocks of three
+        int b = 0, quantum;
+        while (b <= N - 3) {
+            // Process [b:b+3]
+            quantum = ((data[b++] & 0xff) << 16) + ((data[b++] & 0xff) << 8) + (data[b++] & 0xff);
+            chars.append(base64enc[quantum >> 18]);
+            chars.append(base64enc[(quantum >> 12) & 0x3f]);
+            chars.append(base64enc[(quantum >> 6) & 0x3f]);
+            chars.append(base64enc[quantum & 0x3f]);
+        }
+
+        // Process the tail bytes
+        if (tail >= 1) {
+            quantum = ((data[b++] & 0xff) << 8);
+            if (tail == 2) {
+                quantum += data[b++] & 0xff;
+            }
+            chars.append(base64enc[quantum >> 10]);
+            chars.append(base64enc[(quantum >> 4) & 0x3f]);
+            if (tail == 2) {
+                chars.append(base64enc[(quantum << 2) & 0x3f]);
+            }
+        }
+
+        return chars.toString();
+    }
+
+    /** Look-up table for {@link #base64encodeToString(byte[])}. */
+    private static final char[] base64enc =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
+
+    private static final int maxLiteral = 65535;
+
+    /**
+     * This method stores Base64 encoded Python byte code in one or more String literals.
+     * <p>
+     * While Java String objects are limited only by the address range of arrays, the class file
+     * standard only supports literals representable in at most 65535 bytes of modified UTF-8. This
+     * method us used only with base64 Strings (therefore ASCII without nulls) and so each character
+     * occupies exactly 1 byte in the class file after encoding to UTF-8.
+     * <p>
+     * To work within the 65535 byte limitation, the {@code code_str} is split into several literals
+     * with the following naming-scheme:
+     * <ul>
+     * <li>The marker-interface 'ContainsPyBytecode' indicates that a class contains (static final)
+     * literals of the following scheme:
+     * <li>a prefix of '___' indicates a bytecode-containing string literal
+     * <li>a number indicating the number of parts follows
+     * <li>'0_' indicates that no splitting occurred
+     * <li>otherwise another number follows, naming the index of the literal
+     * <li>indexing starts at 0
+     * </ul>
+     * Examples:
+     * <ul>
+     * <li>{@code ___0_method1} contains bytecode for method1
+     * <li>{@code ___2_0_method2} contains first part of method2's bytecode
+     * <li>{@code ___2_1_method2} contains second part of method2's bytecode
+     * </ul>
+     * Note that this approach is provisional. In future, Jython might contain the bytecode directly
+     * as bytecode-objects. The current approach was feasible with far less complicated JVM
+     * bytecode-manipulation, but needs special treatment after class-loading.
+     *
+     * @param name of the method or function being generated
+     * @param code_str Base64 encoded CPython byte code
+     * @param module currently being defined as a class file
+     * @throws java.io.IOException
+     */
+    private static void insert_code_str_to_classfile(String name, String code_str, Module module)
+            throws java.io.IOException {
+        if (code_str.length() <= maxLiteral) {
+            // This can go as a single literal
+            module.classfile.addFinalStringLiteral("___0_" + name, code_str);
+        } else {
+            // We need to split the code into several literals.
+            int splits = code_str.length() / maxLiteral;
+            if (code_str.length() % maxLiteral > 0) {
+                ++splits;
+            }
+            int pos = 0, i = 0;
+            for (; pos + maxLiteral <= code_str.length(); ++i) {
+                module.classfile.addFinalStringLiteral("___" + splits + "_" + i + "_" + name,
+                        code_str.substring(pos, pos + maxLiteral));
+                pos += maxLiteral;
+            }
+            if (i < splits) {
+                module.classfile.addFinalStringLiteral("___" + splits + "_" + i + "_" + name,
+                        code_str.substring(pos));
+            }
+        }
+    }
+
+    /**
+     * Create and write a Python module as a Java class file.
+     *
+     * @param node AST of the module to write
+     * @param ostream stream onto which to write it
+     * @param name
+     * @param filename
+     * @param linenumbers
+     * @param printResults
+     * @param cflags
+     * @param mtime
+     * @throws Exception
+     */
+    public static void compile(mod node, OutputStream ostream, String name, String filename,
+            boolean linenumbers, boolean printResults, CompilerFlags cflags, long mtime)
+            throws Exception {
+
+        try {
+            Module module = new Module(name, filename, linenumbers, mtime);
+            _module_init(node, module, printResults, cflags);
+            module.write(ostream);
+
+        } catch (MethodTooLargeException re) {
+            PyBytecode btcode = loadPyBytecode(filename, true);
+            int thresh = 22000;
+            /*
+             * No idea, how to determine at this point if a method is oversized, so we just try a
+             * threshold regarding Python code-length, while JVM restriction is actually about Java
+             * bytecode length. Anyway; given that code-lengths are strongly related, this should
+             * work well enough.
+             */
+            while (true) { // Always enjoy to write a line like this :)
+                try {
+                    List<PyBytecode> largest_m_codes = new ArrayList<>();
+                    Stack<PyBytecode> buffer = new Stack<>();
+                    // HashSet<PyBytecode> allCodes = new HashSet<>();
+                    buffer.push(btcode);
+                    // allCodes.add(btcode);
+
+                    while (!buffer.isEmpty()) {
+                        /*
+                         * Probably this cannot yield cycles, so cycle-proof stuff is out-commented
+                         * for now. (everything regarding 'allCodes')
+                         */
+                        PyBytecode bcode = buffer.pop();
+                        if (bcode.co_code.length > thresh) {
+                            largest_m_codes.add(bcode);
+                        } else {
+                            /*
+                             * If a function needs to be represented as CPython bytecode, we create
+                             * all inner PyCode-items (classes, functions, methods) also as CPython
+                             * bytecode implicitly, so no need to look at them individually. Maybe
+                             * we can later optimize this such that inner methods can be
+                             * JVM-bytecode as well (if not oversized themselves).
+                             */
+                            for (PyObject item : bcode.co_consts) {
+                                if (item instanceof PyBytecode /* && !allCodes.contains(item) */) {
+                                    PyBytecode mpbc = (PyBytecode) item;
+                                    buffer.push(mpbc);
+                                    // allCodes.add(mpbc);
+                                }
+                            }
+                        }
+                    }
+
+                    Module module = new Module(name, filename, linenumbers, mtime);
+
+                    module.oversized_methods = new Hashtable<>(largest_m_codes.size());
+                    int ov_id = 0;
+                    String name_id;
+
+                    for (PyBytecode largest_m_code : largest_m_codes) {
+                        if (!PyCodeConstant.isJavaIdentifier(largest_m_code.co_name)) {
+                            name_id = "f$_" + ov_id++;
+                        } else {
+                            name_id = largest_m_code.co_name + "$_" + ov_id++;
+                        }
+                        if (largest_m_code.co_name.equals("<module>")) {
+                            /*
+                             * In Jython's opinion module begins at line 0 (while CPython reports
+                             * line 1)
+                             */
+                            module.oversized_methods.put(largest_m_code.co_name + 0, name_id);
+                        } else {
+                            module.oversized_methods.put(
+                                    largest_m_code.co_name + largest_m_code.co_firstlineno,
+                                    name_id);
+                        }
+
+                        String code_str = serializePyBytecode(largest_m_code);
+                        insert_code_str_to_classfile(name_id, code_str, module);
+                    }
+
+                    module.classfile.addInterface(p(org.python.core.ContainsPyBytecode.class));
+
+                    _module_init(node, module, printResults, cflags);
+                    module.write(ostream);
+
+                    break;
+
+                } catch (MethodTooLargeException e) {
+                    thresh -= 1000;
+                }
+                if (thresh < 10000) {
+                    /*
+                     * This value should be well feasible by JVM-bytecode, so something else must be
+                     * wrong.
+                     */
+                    throw new RuntimeException(
+                            "For unknown reason, too large method code couldn't be resolved"
+                                    + "\nby PyBytecode-approach:\n" + filename);
+                }
+            }
+        }
     }
 
     public void emitNum(Num node, Code code) throws Exception {
@@ -720,7 +1135,7 @@ public class Module implements Opcodes, ClassConstants, CompilationContext {
         code.iconst(n);
         code.anewarray(p(PyObject.class));
         for (int i = 0; i < num_setters; i++) {
-            Code setter = this.classfile.addMethod("set$$" + setter_count, //
+            Code setter = this.classfile.addMethod("set$$" + setter_count,
                     sig(Void.TYPE, PyObject[].class), ACC_STATIC | ACC_PRIVATE);
 
             for (int j = 0; (j < MAX_SETTINGS_PER_SETTER)

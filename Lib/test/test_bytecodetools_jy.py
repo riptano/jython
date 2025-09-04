@@ -36,32 +36,26 @@ class BytecodeCallbackTest(unittest.TestCase):
 
     def faulty_callback(self, name, byte, klass):
         raise Exception("test exception")
+
     def faulty_callback2(self, name, byte, klass, bogus):
         return 
 
     def test_faulty_callback(self):
-        import java.lang.System as Sys
-        import java.io.PrintStream as PrintStream
-        import java.io.OutputStream as OutputStream
-
-        class NullOutputStream(OutputStream):
-            def write(self, b): pass
-            def write(self, buf, offset, len): pass
-
-        syserr = Sys.err
-        Sys.setErr(PrintStream(NullOutputStream()))
-
         tools.register(self.faulty_callback)
         tools.register(self.assert_callback)
         tools.register(self.faulty_callback2)
         self.count=0
         try:
+            # Suppress the warning otherwise produced
+            from org.python.core import Py
+            from java.util.logging import Level
+            level = Py.setLoggingLevel(Level.SEVERE)
             eval("42+1")
         finally:
             self.assertTrue(tools.unregister(self.faulty_callback))
             self.assertTrue(tools.unregister(self.faulty_callback2))
             self.assertTrue(tools.unregister(self.assert_callback))
-            Sys.setErr(syserr)
+            Py.setLoggingLevel(level)
         self.assertEqual(self.count, 1)
 
 
@@ -69,7 +63,11 @@ class ProxyDebugDirectoryTest(unittest.TestCase):
     """ProxyDebugDirectory used to be the only way to save proxied classes"""
 
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp()
+        tmp = tempfile.mkdtemp()
+         # Ensure Unicode since derived file paths are used in Java calls
+        if isinstance(tmp, bytes):
+            tmp = tmp.decode(sys.getfilesystemencoding())
+        self.tmpdir = tmp
 
     def tearDown(self):
         test_support.rmtree(self.tmpdir)
@@ -82,7 +80,7 @@ class ProxyDebugDirectoryTest(unittest.TestCase):
         class C(Callable):
             def call(self):
                 return 47
-        
+
         self.assertEqual(C().call(), 47)
         proxy_dir = os.path.join(self.tmpdir, "org", "python", "proxies")
         # If test script is run outside of regrtest, the first path is used;
@@ -93,7 +91,7 @@ class ProxyDebugDirectoryTest(unittest.TestCase):
         self.assertRegexpMatches(
             proxy_classes[0],
             r'\$C\$\d+.class$')
-        
+
 
 def test_main():
     test_support.run_unittest(

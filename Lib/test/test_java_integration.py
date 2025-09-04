@@ -13,6 +13,7 @@ import re
 
 from collections import deque
 from test import test_support
+from distutils.spawn import find_executable
 
 from java.lang import (
     ClassCastException, ExceptionInInitializerError, UnsupportedOperationException,
@@ -44,6 +45,7 @@ from javatests import Issue1833
 from javatests.ProxyTests import NullToString, Person
 
 from clamp import SerializableProxies
+from unittest.case import skip
 
 
 
@@ -115,7 +117,7 @@ class BeanTest(unittest.TestCase):
 
     def test_awt_hack(self):
         # We ignore several deprecated methods in java.awt.* in favor of bean properties that were
-        # addded in Java 1.1.  This tests that one of those bean properties is visible.
+        # added in Java 1.1.  This tests that one of those bean properties is visible.
         c = Container()
         c.size = 400, 300
         self.assertEquals(Dimension(400, 300), c.size)
@@ -126,6 +128,7 @@ class SysIntegrationTest(unittest.TestCase):
 
     def tearDown(self):
         sys.stdout = self.orig_stdout
+        test_support.unlink(test_support.TESTFN)
 
     def test_stdout_outputstream(self):
         out = FileOutputStream(test_support.TESTFN)
@@ -233,6 +236,7 @@ Keywords.while = lambda self: "while"
 Keywords.with = lambda self: "with"
 Keywords.yield = lambda self: "yield"
 
+
 class PyReservedNamesTest(unittest.TestCase):
     "Access to reserved words"
 
@@ -329,6 +333,7 @@ class PyReservedNamesTest(unittest.TestCase):
     def test_yield(self):
         self.assertEquals(self.kws.yield(), "yield")
 
+
 class ImportTest(unittest.TestCase):
     def test_bad_input_exception(self):
         self.assertRaises(ValueError, __import__, '')
@@ -376,6 +381,13 @@ class JavaStringTest(unittest.TestCase):
     def test_string_not_iterable(self):
         x = String('test')
         self.assertRaises(TypeError, list, x)
+
+    def test_null_tostring(self):
+        # http://bugs.jython.org/issue1819
+        nts = NullToString()
+        self.assertEqual(repr(nts), '')
+        self.assertEqual(str(nts), '')
+        self.assertEqual(unicode(nts), '')
 
 class JavaDelegationTest(unittest.TestCase):
     def test_list_delegation(self):
@@ -484,8 +496,11 @@ class SecurityManagerTest(unittest.TestCase):
             # script must lie within python.home for this test to work
             return
         policy = test_support.findfile("python_home.policy")
-        self.assertEquals(subprocess.call([sys.executable,  "-J-Dpython.cachedir.skip=true",
-            "-J-Djava.security.manager", "-J-Djava.security.policy=%s" % policy, script]),
+        self.assertEquals(
+            subprocess.call([sys.executable,
+                             "-J-Dpython.cachedir.skip=true",
+                             "-J-Djava.security.manager",
+                             "-J-Djava.security.policy=%s" % policy, script]),
             0)
 
     def test_import_signal_fails_with_import_error_using_security(self):
@@ -527,6 +542,9 @@ class JavaWrapperCustomizationTest(unittest.TestCase):
         self.assertEquals(7, m.initial)
         self.assertEquals(None, m.nonexistent, "Nonexistent fields should be passed on to the Map")
 
+
+class JavaMROTest(unittest.TestCase):
+
     def test_adding_on_interface(self):
         GetitemAdder.addPredefined()
         class UsesInterfaceMethod(FirstPredefinedGetitem):
@@ -539,32 +557,35 @@ class JavaWrapperCustomizationTest(unittest.TestCase):
         self.assertRaises(TypeError, __import__, "org.python.tests.mro.ConfusedOnImport")
         self.assertRaises(TypeError, GetitemAdder.addPostdefined)
 
-    def test_null_tostring(self):
-        # http://bugs.jython.org/issue1819
-        nts = NullToString()
-        self.assertEqual(repr(nts), '')
-        self.assertEqual(str(nts), '')
-        self.assertEqual(unicode(nts), '')
-
     def test_diamond_inheritance_of_iterable_and_map(self):
-        """Test deeply nested diamond inheritance of Iterable and Map, as see in some Clojure classes"""
-        # http://bugs.jython.org/issue1878
-        from javatests import DiamondIterableMapMRO  # this will raise a TypeError re MRO conflict without the fix
-        # Verify the correct MRO is generated - order is of course *important*;
-        # the following used types are implemented as empty interfaces/abstract classes, but match the inheritance graph
-        # and naming of Clojure/Storm.
-        #
-        # Also instead of directly importing, which would cause annoying bloat in javatests by making lots of little files,
-        # just match using str - this will still be stable/robust.
-        self.assertEqual(
-            str(DiamondIterableMapMRO.__mro__),
-            "(<type 'javatests.DiamondIterableMapMRO'>, <type 'javatests.ILookup'>, <type 'javatests.IPersistentMap'>, <type 'java.lang.Iterable'>, <type 'javatests.Associative'>, <type 'javatests.IPersistentCollection'>, <type 'javatests.Seqable'>, <type 'javatests.Counted'>, <type 'java.util.Map'>, <type 'javatests.AFn'>, <type 'javatests.IFn'>, <type 'java.util.concurrent.Callable'>, <type 'java.lang.Runnable'>, <type 'java.lang.Object'>, <type 'object'>)")
+        """Test deeply nested diamond inheritance of Iterable and Map"""
+        # http://bugs.jython.org/issue1878. Previously raised a TypeError (MRO conflict).
+        from javatests import DiamondIterableMapMRO
+        # The MRO places Iterable ahead of Map (so that __iter__ means j.u.Iterator.__iter__).
+        # The following used types are empty interfaces and abstract classes matching the 
+        # inheritance graph and naming of Clojure/Storm, where the bug was discovered.
+        # Match using str - this will still be stable/robust.
+        mrostr = str(DiamondIterableMapMRO.__mro__)
+        jli = mrostr.find("java.lang.Iterable")
+        self.assertGreater(jli, -1, "Iterable must be in the MRO")
+        jum = mrostr.find("java.util.Map")
+        self.assertGreater(jum, jli, "Map must come later than Iterable")
         # And usable with __iter__ and map functionality
         m = DiamondIterableMapMRO()
         m["abc"] = 42
         m["xyz"] = 47
         self.assertEqual(set(m), set(["abc", "xyz"]))
         self.assertEqual(m["abc"], 42)
+
+    def test_mro_eclipse(self):
+        # http://bugs.jython.org/issue2445
+        from org.python.tests.mro import EclipseChallengeMRO
+
+    def test_mro_ibmmq(self):
+        # http://bugs.jython.org/issue2445
+        from org.python.tests.mro import IBMMQChallengeMRO
+        t = IBMMQChallengeMRO.mq.jms.MQQueue
+
 
 def roundtrip_serialization(obj):
     """Returns a deep copy of an object, via serializing it
@@ -605,18 +626,18 @@ class CloneInput(ObjectInputStream):
 
 def find_jython_jars():
     # Uses the same classpath resolution as bin/jython
-    jython_jar_path = os.path.normpath(os.path.join(sys.executable, "../../jython.jar"))
-    jython_jar_dev_path = os.path.normpath(os.path.join(sys.executable, "../../jython-dev.jar"))
+    jython_bin = os.path.normpath(os.path.dirname(sys.executable))
+    jython_top = os.path.dirname(jython_bin)
+    jython_jar_path = os.path.join(jython_top, 'jython.jar')
+    jython_jar_dev_path = os.path.join(jython_top, 'jython-dev.jar')
     if os.path.exists(jython_jar_dev_path):
         jars = [jython_jar_dev_path]
-        jars.extend(glob.glob(os.path.normpath(os.path.join(jython_jar_dev_path, "../javalib/*.jar"))))
+        jars.extend(glob.glob(os.path.join(jython_top, 'javalib', '*.jar')))
     elif os.path.exists(jython_jar_path):
         jars = [jython_jar_path]
     else:
         raise Exception("Cannot find jython jar")
     return jars
-
-
 
 
 class JavaSource(SimpleJavaFileObject):
@@ -636,6 +657,8 @@ class JavaSource(SimpleJavaFileObject):
         return self._source
 
 
+@unittest.skipIf(ToolProvider.getSystemJavaCompiler() is None,
+        "No Java compiler available. Is JAVA_HOME pointing to a JDK?")
 def compile_java_source(options, class_name, source):
     """Compiles a single java source "file" contained in the string source
     
@@ -686,9 +709,13 @@ class SerializationTest(unittest.TestCase):
         names = [x for x in dir(__builtin__)]
         self.assertEqual(names, roundtrip_serialization(names))
 
+    @unittest.skipUnless(find_executable('jar'), 'Need the jar command to run')
     def test_proxy_serialization(self):
-        """Proxies can be deserializable in a fresh JVM, including being able to "findPython" to get a PySystemState"""
-        tempdir = tempfile.mkdtemp()
+        # Proxies can be deserializable in a fresh JVM, including being able
+        # to "findPython" to get a PySystemState.
+        # tempdir gets combined with unicode paths derived from class names,
+        # so make it a unicode object.
+        tempdir = tempfile.mkdtemp().decode(sys.getfilesystemencoding())
         old_proxy_debug_dir = org.python.core.Options.proxyDebugDirectory
         try:
             # Generate a proxy for Cat class;
@@ -699,7 +726,8 @@ class SerializationTest(unittest.TestCase):
 
             # Create a jar file containing the Cat proxy; could use Java to do this; do it the easy way for now
             proxies_jar_path = os.path.join(tempdir, "proxies.jar")
-            subprocess.check_call(["jar", "cf", proxies_jar_path, "-C", tempdir, "org/"])
+            subprocess.check_call(["jar", "cf", proxies_jar_path, "-C", tempdir,
+                                    "org" + os.path.sep])
 
             # Serialize our cat
             output = ByteArrayOutputStream()
@@ -717,19 +745,22 @@ class SerializationTest(unittest.TestCase):
             jars = find_jython_jars()
             jars.append(proxies_jar_path)
             classpath = os.pathsep.join(jars)
-            env = dict(os.environ)
-            env.update(JYTHONPATH=os.path.normpath(os.path.join(__file__, "..")))
-            cmd = [os.path.join(System.getProperty("java.home"), "bin/java"),
-                   "-classpath", classpath, "ProxyDeserialization", cat_path]
-            self.assertEqual(subprocess.check_output(cmd, env=env, universal_newlines=True),
-                             "meow\n")
+            cmd = [os.path.join(System.getProperty("java.home"), "bin", "java"),
+                   "-Dpython.path=" + os.path.dirname(__file__),
+                    "-classpath", classpath,
+                    "javatests.ProxyDeserialization",
+                    cat_path]
+            self.assertEqual(subprocess.check_output(cmd, universal_newlines=True), "meow\n")
         finally:
             org.python.core.Options.proxyDebugDirectory = old_proxy_debug_dir
             shutil.rmtree(tempdir)
 
+    @unittest.skipUnless(find_executable('jar'), 'Need the jar command to run')
     def test_custom_proxymaker(self):
-        """Verify custom proxymaker supports direct usage of Python code in Java"""
-        tempdir = tempfile.mkdtemp()
+        # Verify custom proxymaker supports direct usage of Python code in Java
+        # tempdir gets combined with unicode paths derived from class names,
+        # so make it a unicode object.
+        tempdir = tempfile.mkdtemp().decode(sys.getfilesystemencoding())
         try:
             SerializableProxies.serialized_path = tempdir
             import bark
@@ -740,7 +771,8 @@ class SerializationTest(unittest.TestCase):
 
             # Create a jar file containing the org.python.test.Dog proxy
             proxies_jar_path = os.path.join(tempdir, "proxies.jar")
-            subprocess.check_call(["jar", "cf", proxies_jar_path, "-C", tempdir, "org/"])
+            subprocess.check_call(["jar", "cf", proxies_jar_path, "-C", tempdir,
+                                    "org" + os.path.sep])
 
             # Build a Java class importing Dog
             source = """
@@ -774,12 +806,11 @@ public class BarkTheDog {
             # PySystemState (and Jython runtime) is initialized for
             # the proxy
             classpath += os.pathsep + tempdir
-            cmd = [os.path.join(System.getProperty("java.home"), "bin/java"),
+            cmd = [os.path.join(System.getProperty("java.home"), "bin", "java"),
+                   "-Dpython.path=" + os.path.dirname(__file__),
                    "-classpath", classpath, "BarkTheDog"]
-            env = dict(os.environ)
-            env.update(JYTHONPATH=os.path.normpath(os.path.join(__file__, "..")))
             self.assertRegexpMatches(
-                subprocess.check_output(cmd, env=env, universal_newlines=True,
+                subprocess.check_output(cmd, universal_newlines=True,
                                         stderr=subprocess.STDOUT),
                 r"^Class defined on CLASSPATH <type 'org.python.test.bark.Dog'>\n"
                                         "Rover barks 42 times$")
@@ -828,7 +859,7 @@ class CopyTest(unittest.TestCase):
         abc = String("abc")
         abc_copy = copy.copy(abc)
         self.assertEqual(id(abc), id(abc_copy))
-        
+
         fruits = ArrayList([String("apple"), String("banana")])
         fruits_copy = copy.copy(fruits)
         self.assertEqual(fruits, fruits_copy)
@@ -932,6 +963,7 @@ def test_main():
         JavaDelegationTest,
         JavaReservedNamesTest,
         JavaStringTest,
+        JavaMROTest,
         JavaWrapperCustomizationTest,
         PyReservedNamesTest,
         SecurityManagerTest,
@@ -939,7 +971,8 @@ def test_main():
         SysIntegrationTest,
         TreePathTest,
         UnicodeTest,
-        SingleMethodInterfaceTest)
+        SingleMethodInterfaceTest,
+        )
 
 if __name__ == "__main__":
     test_main()

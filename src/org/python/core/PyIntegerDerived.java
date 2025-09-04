@@ -57,7 +57,7 @@ public class PyIntegerDerived extends PyInteger implements Slotted,FinalizablePy
     }
 
     public void setDict(PyObject newDict) {
-        if (newDict instanceof PyStringMap||newDict instanceof PyDictionary) {
+        if (newDict instanceof AbstractDict) {
             dict=newDict;
             if (dict.__finditem__(PyString.fromInterned("__del__"))!=null&&!JyAttribute.hasAttr(this,JyAttribute.FINALIZE_TRIGGER_ATTR)) {
                 FinalizeTrigger.ensureFinalizer(this);

@@ -1,4 +1,6 @@
 // Copyright (c) Corporation for National Research Initiatives
+// Copyright (c)2019 Jython Developers.
+// Licensed to PSF under a Contributor Agreement.
 package org.python.core;
 
 import java.lang.reflect.Method;
@@ -12,6 +14,8 @@ public class PyReflectedFunction extends PyObject implements Traverseproc {
     public String __name__;
 
     public PyObject __doc__ = Py.None;
+
+    public PyObject __module__ = Py.None;
 
     public ReflectedArgs[] argslist = new ReflectedArgs[1];
 
@@ -64,6 +68,7 @@ public class PyReflectedFunction extends PyObject implements Traverseproc {
     public PyReflectedFunction copy() {
         PyReflectedFunction func = new PyReflectedFunction(__name__);
         func.__doc__ = __doc__;
+        func.__module__ = __module__;
         func.nargs = nargs;
         func.argslist = new ReflectedArgs[nargs];
         System.arraycopy(argslist, 0, func.argslist, 0, nargs);
@@ -158,7 +163,6 @@ public class PyReflectedFunction extends PyObject implements Traverseproc {
         ReflectedCallData callData = new ReflectedCallData();
         ReflectedArgs match = null;
         for (int i = 0; i < nargs && match == null; i++) {
-            // System.err.println(rargs.toString());
             if (argslist[i].matches(self, args, keywords, callData)) {
                 match = argslist[i];
             }
@@ -167,7 +171,7 @@ public class PyReflectedFunction extends PyObject implements Traverseproc {
             throwError(callData.errArg, args.length, self != null, keywords.length != 0);
         }
         Object cself = callData.self;
-        Method m = (Method)match.data;
+        Method m = (Method)match.method;
 
         // If this is a direct call to a Java class instance method with a PyProxy instance as the
         // arg, use the super__ version to actually route this through the method on the class.
@@ -340,11 +344,17 @@ public class PyReflectedFunction extends PyObject implements Traverseproc {
     /* Traverseproc implementation */
     @Override
     public int traverse(Visitproc visit, Object arg) {
+        if (__module__ != null) {
+            int res = visit.visit(__module__, arg);
+            if (res != 0) {
+                return res;
+            }
+        }
         return __doc__ != null ? visit.visit(__doc__, arg) : 0;
     }
 
     @Override
     public boolean refersDirectlyTo(PyObject ob) {
-        return ob != null && ob == __doc__;
+        return ob != null && (ob == __doc__ || ob == __module__);
     }
 }

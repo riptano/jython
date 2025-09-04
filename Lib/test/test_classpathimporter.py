@@ -26,13 +26,15 @@ class ClasspathImporterTestCase(unittest.TestCase):
     # with sys.path.append where not getting scanned if they start with a top
     # level package we already have, like the "org" in org.python.*
     def test_bug1239(self):
-        with test_support.DirsOnSysPath("Lib/test/bug1239.jar"):
+        jar = test_support.findfile("bug1239.jar")
+        with test_support.DirsOnSysPath(jar):
             import org.test403javapackage.test403
 
     # different from test_bug1239 in that only a Java package is imported, not
     # a Java class.  I'd also like to get rid of this checked in test jar.
     def test_bug1126(self):
-        with test_support.DirsOnSysPath("Lib/test/bug1126/bug1126.jar"):
+        jar = test_support.findfile("bug1126.jar", subdir="bug1126")
+        with test_support.DirsOnSysPath(jar):
             import org.subpackage
 
 
@@ -119,6 +121,9 @@ class PyclasspathImporterTestCase(unittest.TestCase):
         self.assertFalse(loader.is_package('jar_pkg.prefer_compiled'))
 
     @unittest.skipIf(test_support.is_jython_posix, "FIXME: failing on Linux issue #2422")
+    @unittest.skipIf(test_support.get_java_version() >= (9,),
+                     "Fails on Java 9+. See b.j.o. issue #2362") # FIXME
+    # Probably related to Java modules: ensure also works outside java.base
     def test_loader_get_code(self):
         # Execute Python code out of the JAR
         jar = self.prepareJar('classimport.jar')

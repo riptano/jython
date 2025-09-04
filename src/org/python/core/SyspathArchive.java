@@ -1,6 +1,6 @@
-
 package org.python.core;
 import java.io.*;
+import java.util.logging.Logger;
 import java.util.zip.*;
 
 @Untraversable
@@ -8,7 +8,8 @@ public class SyspathArchive extends PyString {
     private ZipFile zipFile;
 
     public SyspathArchive(String archiveName) throws IOException {
-        super(archiveName);
+        // As a string-like object (on sys.path) an FS-encoded bytes object is expected
+        super(Py.fileSystemEncode(archiveName).getString());
         archiveName = getArchiveName(archiveName);
         if(archiveName == null) {
             throw new IOException("path '" + archiveName + "' not an archive");
@@ -20,7 +21,8 @@ public class SyspathArchive extends PyString {
     }
 
     SyspathArchive(ZipFile zipFile, String archiveName) {
-        super(archiveName);
+        // As a string-like object (on sys.path) an FS-encoded bytes object is expected
+        super(Py.fileSystemEncode(archiveName).getString());
         this.zipFile = zipFile;
     }
 
@@ -86,8 +88,9 @@ public class SyspathArchive extends PyString {
         int off = 0;
         while (len > 0) {
             int l = istream.read(buffer, off, buffer.length - off);
-            if (l < 0)
+            if (l < 0) {
                 return null;
+            }
             off += l;
             len -= l;
         }
@@ -96,12 +99,13 @@ public class SyspathArchive extends PyString {
     }
 
 /*
+    private static Logger logger = Logger.getLogger("org.python.import");
     protected void finalize() {
         System.out.println("closing zip file " + toString());
         try {
             zipFile.close();
         } catch (IOException e) {
-            Py.writeDebug("import", "closing zipEntry failed");
+            logger.log(Level.FINE, "closing zipEntry failed");
         }
     }
 */

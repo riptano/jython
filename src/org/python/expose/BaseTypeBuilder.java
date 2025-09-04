@@ -16,7 +16,7 @@ public class BaseTypeBuilder implements TypeBuilder {
 
     private PyDataDescr[] descrs;
 
-    private Class<?> typeClass;
+    private Class<? extends PyObject> typeClass;
 
     private Class<?> baseClass;
 
@@ -27,7 +27,7 @@ public class BaseTypeBuilder implements TypeBuilder {
     private String doc;
 
     public BaseTypeBuilder(String name,
-                           Class<?> typeClass,
+                           Class<? extends PyObject> typeClass,
                            Class<?> baseClass,
                            boolean isBaseType,
                            String doc,
@@ -44,8 +44,9 @@ public class BaseTypeBuilder implements TypeBuilder {
         this.newWrapper = newWrapper;
     }
 
+    @Override
     public PyObject getDict(PyType type) {
-        PyObject dict = new PyStringMap();
+        PyStringMap dict = new PyStringMap();
         for(PyBuiltinMethod func : meths) {
             PyMethodDescr pmd = func.makeDescriptor(type);
             dict.__setitem__(pmd.getName(), pmd);
@@ -61,22 +62,27 @@ public class BaseTypeBuilder implements TypeBuilder {
         return dict;
     }
 
+    @Override
     public String getName() {
         return name;
     }
 
-    public Class<?> getTypeClass() {
+    @Override
+    public Class<? extends PyObject> getTypeClass() {
         return typeClass;
     }
 
+    @Override
     public Class<?> getBase() {
         return baseClass;
     }
 
+    @Override
     public boolean getIsBaseType() {
         return isBaseType;
     }
 
+    @Override
     public String getDoc() {
         return doc;
     }

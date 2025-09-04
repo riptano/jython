@@ -46,7 +46,7 @@ public class PyClass extends PyObject implements Traverseproc {
         if (!name.getType().isSubType(PyString.TYPE)) {
             throw Py.TypeError("PyClass_New: name must be a string");
         }
-        if (!(dict instanceof PyStringMap || dict instanceof PyDictionary)) {
+        if (!(dict instanceof AbstractDict)) {
             throw Py.TypeError("PyClass_New: dict must be a dictionary");
         }
         PyType.ensureDoc(dict);
@@ -248,7 +248,7 @@ public class PyClass extends PyObject implements Traverseproc {
     }
 
     public void setDict(PyObject value) {
-        if (value == null || !(value instanceof PyStringMap || value instanceof PyDictionary)) {
+        if (value == null || !(value instanceof AbstractDict)) {
             throw Py.TypeError("__dict__ must be a dictionary object");
         }
         __dict__ = value;

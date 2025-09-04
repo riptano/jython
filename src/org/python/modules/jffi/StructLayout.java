@@ -1,4 +1,3 @@
-
 package org.python.modules.jffi;
 
 import java.util.Arrays;
@@ -20,7 +19,7 @@ import org.python.expose.ExposedNew;
 import org.python.expose.ExposedType;
 
 @ExposedType(name = "jffi.StructLayout", base = CType.class)
-public class StructLayout extends CType.Custom {
+public class StructLayout extends CType.Custom implements Traverseproc {
     public static final PyType TYPE = PyType.fromClass(StructLayout.class);
     static {
         TYPE.fastGetDict().__setitem__("Field", Field.TYPE);
@@ -141,8 +140,8 @@ public class StructLayout extends CType.Custom {
             }
 
             com.kenai.jffi.Type jffiType = isUnion
-                    ? new com.kenai.jffi.Union(fieldTypes)
-                    : new com.kenai.jffi.Struct(fieldTypes);
+                    ? com.kenai.jffi.Union.newUnion(fieldTypes)
+                    : com.kenai.jffi.Struct.newStruct(fieldTypes);
 
             return new StructLayout(fields, jffiType, MemoryOp.INVALID);
         }
@@ -206,5 +205,45 @@ public class StructLayout extends CType.Custom {
     public PyObject __getitem__(PyObject key) {
         StructLayout.Field f = getField(key);
         return f != null ? f : Py.None;
+    }
+
+
+    /* Traverseproc implementation */
+    @Override
+    public int traverse(Visitproc visit, Object arg) {
+        int res = 0;
+        if (fields != null) {
+            for (Field fld: fields) {
+                res = visit.visit(fld, arg);
+                if (res != 0) {
+                    return res;
+                }
+            }
+        }
+        if (fieldMap != null) {
+            for (Object key: fieldMap.keySet()) {
+                if (key instanceof PyObject) {
+                    res = visit.visit((PyObject) key, arg);
+                    if (res != 0) {
+                        return res;
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+
+    @Override
+    public boolean refersDirectlyTo(PyObject ob) {
+        if (ob == null) {
+            return false;
+        }
+        if (fields != null && fields.contains(ob)) {
+            return true;
+        }
+        if (fieldMap != null && fieldMap.containsKey(ob)) {
+            return true;
+        }
+        return false;
     }
 }

@@ -12,6 +12,8 @@ from distutils.dep_util import newer
 from distutils.spawn import spawn
 from distutils import log
 from distutils.errors import DistutilsByteCompileError
+if sys.platform.startswith('java'):
+    import _imp
 
 def get_platform ():
     """Return a string that identifies the current platform.  This is used
@@ -534,7 +536,7 @@ byte_compile(files, optimize=%r, force=%r,
     # mode simply calls 'byte_compile()' in direct mode, a weird sort of
     # cross-process recursion.  Hey, it works!
     else:
-        from py_compile import compile
+        import py_compile
 
         for file in py_files:
             if file[-3:] != ".py":
@@ -546,7 +548,7 @@ byte_compile(files, optimize=%r, force=%r,
             #   cfile - byte-compiled file
             #   dfile - purported source filename (same as 'file' by default)
             if sys.platform.startswith('java'):
-                cfile = file[:-3] + '$py.class'
+                cfile = _imp.makeCompiledFilename(file)
             else:
                 cfile = file + (__debug__ and "c" or "o")
             dfile = file
@@ -564,7 +566,7 @@ byte_compile(files, optimize=%r, force=%r,
                 if force or newer(file, cfile):
                     log.info("byte-compiling %s to %s", file, cfile_base)
                     if not dry_run:
-                        compile(file, cfile, dfile)
+                        py_compile.compile(file, cfile, dfile)
                 else:
                     log.debug("skipping byte-compilation of %s to %s",
                               file, cfile_base)

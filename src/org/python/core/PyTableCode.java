@@ -5,9 +5,6 @@ package org.python.core;
  * An implementation of PyCode where the actual executable content
  * is stored as a PyFunctionTable instance and an integer index.
  */
-
-import org.python.modules._systemrestart;
-
 @Untraversable
 public class PyTableCode extends PyBaseCode
 {
@@ -66,31 +63,39 @@ public class PyTableCode extends PyBaseCode
         // co_lnotab, co_stacksize
     };
 
+    @Override
     public PyObject __dir__() {
         PyString members[] = new PyString[__members__.length];
-        for (int i = 0; i < __members__.length; i++)
+        for (int i = 0; i < __members__.length; i++) {
             members[i] = new PyString(__members__[i]);
+        }
         return new PyList(members);
     }
 
     private void throwReadonly(String name) {
-        for (int i = 0; i < __members__.length; i++)
-            if (__members__[i] == name)
+        for (int i = 0; i < __members__.length; i++) {
+            if (__members__[i] == name) {
                 throw Py.TypeError("readonly attribute");
+            }
+        }
         throw Py.AttributeError(name);
     }
 
+    @Override
     public void __setattr__(String name, PyObject value) {
         // no writable attributes
         throwReadonly(name);
     }
 
+    @Override
     public void __delattr__(String name) {
         throwReadonly(name);
     }
 
     private static PyTuple toPyStringTuple(String[] ar) {
-        if (ar == null) return Py.EmptyTuple;
+        if (ar == null) {
+            return Py.EmptyTuple;
+        }
         int sz = ar.length;
         PyString[] pystr = new PyString[sz];
         for (int i = 0; i < sz; i++) {
@@ -99,6 +104,7 @@ public class PyTableCode extends PyBaseCode
         return new PyTuple(pystr);
     }
 
+    @Override
     public PyObject __findattr_ex__(String name) {
         // have to craft co_varnames specially
         if (name == "co_varnames") {
@@ -111,7 +117,7 @@ public class PyTableCode extends PyBaseCode
             return toPyStringTuple(co_freevars);
         }
         if (name == "co_filename") {
-            return new PyString(co_filename);
+            return Py.fileSystemEncode(co_filename); // bytes object expected by clients
         }
         if (name == "co_name") {
             return new PyString(co_name);
@@ -141,7 +147,7 @@ public class PyTableCode extends PyBaseCode
             } else {
                 //System.err.println("ts: "+ts);
                 //System.err.println("ss: "+ts.systemState);
-                frame.f_builtins = ts.getSystemState().builtins;;
+                frame.f_builtins = ts.getSystemState().builtins;
             }
         }
         // nested scopes: setup env with closure
@@ -167,6 +173,12 @@ public class PyTableCode extends PyBaseCode
             ret = funcs.call_function(func_id, frame, ts);
         } catch (Throwable t) {
             // Convert exceptions that occurred in Java code to PyExceptions
+            if (!(t instanceof Exception)) {
+                Py.warning(Py.RuntimeWarning, "PyTableCode.call caught a Throwable that is "
+                        + "not an Exception:\n"+t+"\nJython internals might be in a bad state now "
+                        + "that can cause deadlocks later on."
+                        + "\nSee http://bugs.jython.org/issue2536 for details.");
+            }
             PyException pye = Py.JavaError(t);
             pye.tracebackHere(frame);
 
@@ -197,14 +209,7 @@ public class PyTableCode extends PyBaseCode
 
         // Restore previously defined exception
         ts.exception = previous_exception;
-
         ts.frame = ts.frame.f_back;
-
-        // Check for interruption, which is used for restarting the interpreter
-        // on Jython
-        if (ts.getSystemState()._systemRestart && Thread.currentThread().isInterrupted()) {
-            throw new PyException(_systemrestart.SystemRestart);
-        }
         return ret;
     }
 

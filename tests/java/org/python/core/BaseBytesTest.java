@@ -6,6 +6,7 @@ import java.util.Random;
 
 import junit.framework.TestCase;
 
+import org.python.core.BaseBytes.Builder;
 import org.python.core.buffer.SimpleBuffer;
 import org.python.util.PythonInterpreter;
 
@@ -217,7 +218,7 @@ public class BaseBytesTest extends TestCase {
         // Local constructor from byte[]
         int[] aRef = toInts("Chaque coquillage incrusté");
         BaseBytes a = getInstance(aRef);
-        System.out.println(toString(a));
+        // System.out.println(toString(a));
         assertEquals(aRef.length, a.size());
 
         // init(int) at various sizes
@@ -237,7 +238,7 @@ public class BaseBytesTest extends TestCase {
         BaseBytes a = getInstance(aRef);
         // Copy constructor b = bytes(a)
         BaseBytes b = getInstance(a);
-        System.out.println(toString(b));
+        // System.out.println(toString(b));
         assertEquals(a.size(), b.size());
         // assertEquals(a.storage, b.storage); // Supposed to share?
         // Check we got the same bytes
@@ -254,7 +255,7 @@ public class BaseBytesTest extends TestCase {
         // Make an Iterable<? extends PyObject> of that
         Iterable<? extends PyObject> ia = iterableBytes(aRef);
         BaseBytes a = getInstance(ia);
-        System.out.println(toString(a));
+        // System.out.println(toString(a));
         assertEquals(aRef.length, a.size());
         checkInts(aRef, a);
 
@@ -319,7 +320,7 @@ public class BaseBytesTest extends TestCase {
             PyObject aRef = boobyPrize[dip];
             try {
                 BaseBytes a = getInstance(brantub[dip]);
-                System.out.println(toString(a));
+                // System.out.println(toString(a));
                 fail("Exception not thrown for " + brantub[dip]);
             } catch (PyException pye) {
                 // System.out.println(pye);
@@ -452,7 +453,7 @@ public class BaseBytesTest extends TestCase {
 
         try {
             a.pyset(start, x);
-            System.out.println(toString(a));
+            // System.out.println(toString(a));
             fail(String.format("Exception not thrown for pyset(%d,%s)", start, x));
         } catch (PyException pye) {
             // System.out.println(pye);
@@ -476,7 +477,7 @@ public class BaseBytesTest extends TestCase {
 
         try {
             a.setslice(start, stop, step, x);
-            System.out.println(toString(a));
+            // System.out.println(toString(a));
             fail(String.format("Exception not thrown for setslice(%d,%d,%d,%s)", start, stop, step,
                     x));
         } catch (PyException pye) {
@@ -685,7 +686,7 @@ public class BaseBytesTest extends TestCase {
         }
 
         /**
-         * Returns a PyByteArray that repeats this sequence the given number of times, as in the
+         * Returns a MyBytes that repeats this sequence the given number of times, as in the
          * implementation of <tt>__mul__</tt> for strings.
          *
          * @param count the number of times to repeat this.
@@ -693,9 +694,9 @@ public class BaseBytesTest extends TestCase {
          */
         @Override
         protected MyBytes repeat(int count) {
-            MyBytes ret = new MyBytes();
-            ret.setStorage(repeatImpl(count));
-            return ret;
+            Builder builder = new Builder(size * (long) count);
+            builder.repeat(this, count);
+            return getResult(builder);
         }
 
         /**
@@ -743,23 +744,11 @@ public class BaseBytesTest extends TestCase {
             setStorage(builder.getStorage(), builder.getSize());
         }
 
-        /*
-         * (non-Javadoc)
-         *
-         * @see org.python.core.BaseBytes#getBuilder(int)
-         */
         @Override
-        protected Builder getBuilder(int capacity) {
-            // Return a Builder specialised for my class
-            return new Builder(capacity) {
-
-                @Override
-                MyBytes getResult() {
-                    // Create a MyBytes from the storage that the builder holds
-                    return new MyBytes(this);
-                }
-            };
+        protected MyBytes getResult(Builder b) {
+            return new MyBytes(b);
         }
+
     }
 
     /**

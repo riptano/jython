@@ -42,7 +42,8 @@ public class PyStatResult extends PyTuple {
     public static final int n_sequence_fields = 10, n_fields = 10, n_unnamed_fields = 10;
 
     PyStatResult(PyObject... vals) {
-        super(TYPE, vals);
+        super(TYPE, new PyObject[] {vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6],
+                vals[7].__int__(), vals[8].__int__(), vals[9].__int__()});
         st_mode = vals[0];
         st_ino = vals[1];
         st_dev = vals[2];
@@ -53,6 +54,20 @@ public class PyStatResult extends PyTuple {
         st_atime = vals[7];
         st_mtime = vals[8];
         st_ctime = vals[9];
+    }
+
+    protected PyStatResult(PyObject[] vals, PyObject st_atime, PyObject st_mtime, PyObject st_ctime) {
+        super(TYPE, vals);
+        st_mode = vals[0];
+        st_ino = vals[1];
+        st_dev = vals[2];
+        st_nlink = vals[3];
+        st_uid = vals[4];
+        st_gid = vals[5];
+        st_size = vals[6];
+        this.st_atime = st_atime;
+        this.st_mtime = st_mtime;
+        this.st_ctime = st_ctime;
     }
 
     @ExposedNew
@@ -67,7 +82,12 @@ public class PyStatResult extends PyTuple {
                 throw Py.TypeError(msg);
             }
             // tuples are immutable, so we can just use its underlying array
-            return new PyStatResult(((PyTuple)obj).getArray());
+            if (obj instanceof PyStatResult) {
+                return new PyStatResult(((PyTuple) obj).getArray(), ((PyStatResult) obj).st_atime,
+                        ((PyStatResult) obj).st_mtime, ((PyStatResult) obj).st_ctime);
+            } else {
+                return new PyStatResult(((PyTuple) obj).getArray());
+            }
         }
         else {
             PyList seq = new PyList(obj);
@@ -101,7 +121,7 @@ public class PyStatResult extends PyTuple {
 
     private static Long zeroOrValue(Long value) {
         if (value == null) {
-            return new Long(0L);
+            return Long.valueOf(0L);
         } else {
             return value;
         }
@@ -109,7 +129,7 @@ public class PyStatResult extends PyTuple {
 
     private static Integer zeroOrValue(Integer value) {
         if (value == null) {
-            return new Integer(0);
+            return Integer.valueOf(0);
         } else {
             return value;
         }
@@ -150,35 +170,6 @@ public class PyStatResult extends PyTuple {
                 Py.newFloat(fromFileTime(stat.lastAccessTime())),
                 Py.newFloat(fromFileTime(stat.lastModifiedTime())),
                 Py.newFloat(fromFileTime(stat.creationTime())));
-    }
-
-    // Override pyget, getslice to preserve backwards compatiblity that ints are returned for time elements
-    // if accessing by an index or slice
-
-    private final static int ST_ATIME = 7;
-    private final static int ST_MTIME = 8;
-    private final static int ST_CTIME = 9;
-
-    @Override
-    public PyObject pyget(int index) {
-        if (index == ST_ATIME || index == ST_MTIME || index == ST_CTIME) {
-            return super.pyget(index).__int__();
-        } else {
-            return super.pyget(index);
-        }
-    }
-
-    @Override
-    protected PyObject getslice(int start, int stop, int step) {
-        if (step > 0 && stop < start) {
-            stop = start;
-        }
-        int n = sliceLength(start, stop, step);
-        PyObject[] newArray = new PyObject[n];
-        for (int i = start, j = 0; j < n; i += step, j++) {
-            newArray[j] = pyget(i);
-        }
-        return new PyTuple(newArray, false);
     }
 
     @Override
@@ -232,7 +223,11 @@ public class PyStatResult extends PyTuple {
 
     @Override
     public PyTuple __getnewargs__() {
-        return new PyTuple(new PyList(getArray()));
+        PyList lst = new PyList(getArray());
+        lst.pyset(7, st_atime);
+        lst.pyset(8, st_mtime);
+        lst.pyset(9, st_ctime);
+        return new PyTuple(lst);
     }
 
     @Override
@@ -244,54 +239,15 @@ public class PyStatResult extends PyTuple {
     }
 
 
-    /* Traverseproc implementation */
+    /* Traverseproc implementation
+     * Note that there are more fields to traverse. However traverse in PyTuple handles those.
+     * Here we only traverse values that are not exactly referenced in PyTuple entries.
+     */
     @Override
     public int traverse(Visitproc visit, Object arg) {
         int retVal = super.traverse(visit, arg);
         if (retVal != 0) {
             return retVal;
-        }
-        if (st_mode != null) {
-            retVal = visit.visit(st_mode, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (st_ino != null) {
-            retVal = visit.visit(st_ino, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (st_dev != null) {
-            retVal = visit.visit(st_dev, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (st_nlink != null) {
-            retVal = visit.visit(st_nlink, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (st_uid != null) {
-            retVal = visit.visit(st_uid, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (st_gid != null) {
-            retVal = visit.visit(st_gid, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (st_size != null) {
-            retVal = visit.visit(st_size, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
         }
         if (st_atime != null) {
             retVal = visit.visit(st_atime, arg);
@@ -310,8 +266,7 @@ public class PyStatResult extends PyTuple {
 
     @Override
     public boolean refersDirectlyTo(PyObject ob) {
-        return ob != null && (ob == st_mode || ob == st_ino || ob == st_dev || ob == st_nlink
-            || ob == st_uid || ob == st_gid || ob == st_size || ob == st_atime
-            || ob == st_mtime || ob == st_ctime || super.refersDirectlyTo(ob));
+        return ob != null && (ob == st_atime || ob == st_mtime
+            || ob == st_ctime || super.refersDirectlyTo(ob));
     }
 }

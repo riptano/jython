@@ -17,6 +17,7 @@ import org.python.core.PyIterator;
 import org.python.core.PyList;
 import org.python.core.PyObject;
 import org.python.core.PyString;
+import org.python.core.PyUnicode;
 import org.python.core.PyType;
 
 /**
@@ -27,6 +28,36 @@ import org.python.core.PyType;
  * @version cStringIO.java,v 1.10 1999/05/20 18:03:20 fb Exp
  */
 public class cStringIO {
+    public static final String __doc__ =
+            "A simple fast partial StringIO replacement.\n" +
+            "\n" +
+            "This module provides a simple useful replacement for\n" +
+            "the StringIO module that is written in Java.  It does not provide the\n" +
+            "full generality of StringIO, but it provides enough for most\n" +
+            "applications and is especially useful in conjunction with the\n" +
+            "pickle module.\n" +
+            "\n" +
+            "Usage:\n" +
+            "\n" +
+            "  from cStringIO import StringIO\n" +
+            "\n" +
+            "  an_output_stream=StringIO()\n" +
+            "  an_output_stream.write(some_stuff)\n" +
+            "  ...\n" +
+            "  value=an_output_stream.getvalue()\n" +
+            "\n" +
+            "  an_input_stream=StringIO(a_string)\n" +
+            "  spam=an_input_stream.readline()\n" +
+            "  spam=an_input_stream.read(5)\n" +
+            "  an_input_stream.seek(0)           # OK, start over\n" +
+            "  spam=an_input_stream.read()       # and read it all\n" +
+            "  \n" +
+            "If someone else wants to provide a more complete implementation,\n" +
+            "go for it. :-)  \n" +
+            "\n" +
+            "cStringIO.java,v 1.10 1999/05/20 18:03:20 fb Exp\n" +
+            "Python-level doc was inserted on 2017/02/01, copied from\n" +
+            "cStringIO.c,v 1.29 1999/06/15 14:10:27 jim Exp\n";
 
     // would be nicer if we directly imported from os, but crazy to do so
     // since in python code itself
@@ -39,6 +70,9 @@ public class cStringIO {
     public static PyType InputType = PyType.fromClass(StringIO.class);
     public static PyType OutputType = PyType.fromClass(StringIO.class);
 
+    public static final String __doc__StringIO =
+            "StringIO([s]) -- Return a StringIO-like stream for reading or writing";
+
     public static StringIO StringIO() {
         return new StringIO();
     }
@@ -48,7 +82,7 @@ public class cStringIO {
      * @param buffer       The initial value.
      * @return          a new StringIO object.
      */
-    public static StringIO StringIO(String buffer) {
+    public static StringIO StringIO(CharSequence buffer) {
         return new StringIO(buffer);
     }
 
@@ -65,7 +99,7 @@ public class cStringIO {
     /**
      * The StringIO object
      * @see cStringIO#StringIO()
-     * @see cStringIO#StringIO(String)
+     * @see cStringIO#StringIO(CharSequence)
      */
     public static class StringIO extends PyIterator {
         public boolean softspace = false;
@@ -78,9 +112,9 @@ public class cStringIO {
             buf = new StringBuilder();
         }
 
-
-        public StringIO(String buffer) {
-            buf = new StringBuilder(buffer);
+        public StringIO(CharSequence buffer) {
+            buf = new StringBuilder(buffer instanceof PyUnicode ?
+                    ((PyUnicode) buffer).encode() : buffer);
         }
 
         public StringIO(PyArray array) {
@@ -88,8 +122,9 @@ public class cStringIO {
         }
 
         private void _complain_ifclosed() {
-            if (closed)
+            if (closed) {
                 throw Py.ValueError("I/O operation on closed file");
+            }
         }
 
         private int _convert_to_int(long val) {
@@ -99,6 +134,7 @@ public class cStringIO {
             return (int)val;
         }
 
+        @Override
         public void __setattr__(String name, PyObject value) {
             if (name == "softspace") {
                 softspace = value.__nonzero__();
@@ -107,14 +143,17 @@ public class cStringIO {
             super.__setattr__(name, value);
         }
 
+        @Override
         public PyObject __iternext__() {
             _complain_ifclosed();
             PyString r = readline();
-            if (r.__len__() == 0)
+            if (r.__len__() == 0) {
                 return null;
+            }
             return r;
         }
 
+        public static final String __doc__close = "close(): explicitly release resources held.";
         /**
          * Free the memory buffer.
          */
@@ -127,7 +166,7 @@ public class cStringIO {
             // buf = null;
         }
 
-
+        public static final String __doc__isatty = "isatty(): always returns 0";
         /**
          * Return false.
          * @return      false.
@@ -137,7 +176,9 @@ public class cStringIO {
             return false;
         }
 
-
+        public static final String __doc__seek =
+                "seek(position)       -- set the current position\n" +
+                "seek(position, mode) -- mode 0: absolute; 1: relative; 2: relative to EOF";
         /**
          * Position the file pointer to the absolute position.
          * @param       pos the position in the file.
@@ -146,10 +187,9 @@ public class cStringIO {
             seek(pos, os.SEEK_SET);
         }
 
-
         /**
          * Position the file pointer to the position in the .
-         * 
+         *
          * @param pos
          *            the position in the file.
          * @param mode
@@ -171,6 +211,8 @@ public class cStringIO {
             }
         }
 
+        public static final String __doc__reset =
+                "reset() -- Reset the file position to the beginning";
         /**
          * Reset the file position to the beginning of the file.
          */
@@ -178,6 +220,7 @@ public class cStringIO {
             pos = 0;
         }
 
+        public static final String __doc__tell = "tell() -- get the current position.";
         /**
          * Return the file position.
          * @return     the position in the file.
@@ -187,8 +230,8 @@ public class cStringIO {
             return pos;
         }
 
-
-
+        public static final String __doc__read =
+                "read([s]) -- Read s characters, or the rest of the string";
         /**
          * Read all data until EOF is reached.
          * An empty string is returned when EOF is encountered immediately.
@@ -198,7 +241,6 @@ public class cStringIO {
             return read(-1);
         }
 
-
         /**
          * Read at most size bytes from the file (less if the read hits EOF).
          * If the size argument is negative, read all data until EOF is
@@ -207,7 +249,6 @@ public class cStringIO {
          * @param size  the number of characters to read.
          * @return     A string containing the data read.
          */
-
         public synchronized PyString read(long size) {
             _complain_ifclosed();
             _convert_to_int(size);
@@ -225,6 +266,7 @@ public class cStringIO {
             return new PyString(substr);
         }
 
+        public static final String __doc__readline = "readline() -- Read one line";
         /**
          * Read one entire line from the file. A trailing newline character
          * is kept in the string (but may be absent when a file ends with
@@ -235,7 +277,6 @@ public class cStringIO {
         public PyString readline() {
             return readline(-1);
         }
-
 
         /**
          * Read one entire line from the file. A trailing newline character
@@ -263,7 +304,6 @@ public class cStringIO {
             return new PyString(r);
         }
 
-
         /**
          * Read and return a line without the trailing newline.
          * Usind by cPickle as an optimization.
@@ -275,13 +315,13 @@ public class cStringIO {
             int newpos = (i < 0) ? len : i;
             String r = buf.substring(pos, newpos);
             pos = newpos;
-            if (pos  < len) // Skip the newline
+            if (pos  < len) {
                 pos++;
+            }
             return new PyString(r);
         }
 
-
-
+        public static final String __doc__readlines = "readlines() -- Read all lines";
         /**
          * Read until EOF using readline() and return a list containing
          * the lines thus read.
@@ -290,7 +330,6 @@ public class cStringIO {
         public PyObject readlines() {
             return readlines(0);
         }
-
 
         /**
          * Read until EOF using readline() and return a list containing
@@ -307,13 +346,16 @@ public class cStringIO {
             while (line.__len__() > 0) {
                 lines.append(line);
                 total += line.__len__();
-                if (0 < sizehint_int  && sizehint_int <= total)
+                if (0 < sizehint_int  && sizehint_int <= total) {
                     break;
+                }
                 line = readline();
             }
             return lines;
         }
 
+        public static final String __doc__truncate =
+                "truncate(): truncate the file at the current position.";
         /**
          * truncate the file at the current position.
          */
@@ -329,12 +371,16 @@ public class cStringIO {
                 throw Py.IOError("Negative size not allowed");
             }
             int pos_int = _convert_to_int(pos);
-            if (pos_int < 0)
+            if (pos_int < 0) {
                 pos_int = this.pos;
+            }
             buf.setLength(pos_int);
             this.pos = pos_int;
         }
 
+        public static final String __doc__write =
+                "write(s) -- Write a string to the file" +
+                "\n\nNote (hack:) writing None resets the buffer";
         /**
          * Write a string to the file.
          * @param obj     The data to write.
@@ -361,8 +407,9 @@ public class cStringIO {
                 int l = spos - slen;
                 char[] bytes = new char[l];
 
-                for (int i = 0; i < l - 1; i++)
+                for (int i = 0; i < l - 1; i++) {
                     bytes[i] = '\0';
+                }
 
                 buf.append(bytes);
                 slen = spos;
@@ -393,12 +440,17 @@ public class cStringIO {
          */
         public synchronized void writeChar(char ch) {
             int len = buf.length();
-            if (len <= pos)
+            if (len <= pos) {
                 buf.setLength(pos + 1);
+            }
             buf.setCharAt(pos++, ch);
         }
 
-
+        public static final String __doc__writelines =
+                "writelines(sequence_of_strings) -> None.  Write the strings to the file.\n" +
+                "\n" +
+                "Note that newlines are not added.  The sequence can be any iterable object\n" +
+                "producing strings. This is equivalent to calling write() for each string.";
         /**
          * Write a list of strings to the file.
          */
@@ -408,7 +460,7 @@ public class cStringIO {
             }
         }
 
-
+        public static final String  __doc__flush = "flush(): does nothing.";
         /**
          * Flush the internal buffer. Does nothing.
          */
@@ -416,7 +468,11 @@ public class cStringIO {
             _complain_ifclosed();
         }
 
-
+        public static final String __doc__getvalue =
+                "getvalue([use_pos]) -- Get the string value." +
+                "\n" +
+                "If use_pos is specified and is a true value, then the string returned\n" +
+                "will include only the text up to the current file position.\n";
         /**
          * Retrieve the entire contents of the ``file'' at any time
          * before the StringIO object's close() method is called.
@@ -428,6 +484,7 @@ public class cStringIO {
         }
 
     }
+
 
     private static String[] strings = new String[256];
     static String getString(char ch) {
@@ -443,5 +500,5 @@ public class cStringIO {
       }
       return s;
    }
-
 }
+

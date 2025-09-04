@@ -57,6 +57,7 @@ import org.python.core.PyObject;
 import org.python.core.PyString;
 import org.python.core.PySystemState;
 import org.python.core.PyTuple;
+import org.python.core.PyUnicode;
 import org.python.core.Untraversable;
 import org.python.core.imp;
 import org.python.core.io.FileIO;
@@ -342,7 +343,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__chown = new PyString(
         "chown(path, uid, gid)\n\n" +
         "Change the owner and group id of path to the numeric uid and gid.");
-    @Hide(OS.NT)
+    @Hider.Hide(OS.NT)
     public static void chown(PyObject path, int uid, int gid) {
         if (posix.chown(absolutePath(path).toString(), uid, gid) < 0) {
             throw errorFromErrno(path);
@@ -361,7 +362,7 @@ public class PosixModule implements ClassDictInit {
         }
     }
 
-    @Hide(OS.NT)
+    @Hider.Hide(OS.NT)
     public static void closerange(PyObject fd_lowObj, PyObject fd_highObj) {
         int fd_low = getFD(fd_lowObj).getIntFD(false);
         int fd_high = getFD(fd_highObj).getIntFD(false);
@@ -423,7 +424,7 @@ public class PosixModule implements ClassDictInit {
         "fdatasync(fildes)\n\n" +
         "force write of file with filedescriptor to disk.\n" +
         "does not force update of metadata.");
-    @Hide(OS.NT)
+    @Hider.Hide(OS.NT)
     public static void fdatasync(PyObject fd) {
         Object javaobj = fd.__tojava__(RawIOBase.class);
         if (javaobj != Py.NoConversion) {
@@ -486,7 +487,8 @@ public class PosixModule implements ClassDictInit {
         "getcwd() -> path\n\n" +
         "Return a string representing the current working directory.");
     public static PyObject getcwd() {
-        return Py.newStringOrUnicode(Py.getSystemState().getCurrentWorkingDir());
+        // The return value is bytes in the file system encoding
+        return Py.fileSystemEncode(Py.getSystemState().getCurrentWorkingDir());
     }
 
     public static PyString __doc__getcwdu = new PyString(
@@ -499,7 +501,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__getegid = new PyString(
         "getegid() -> egid\n\n" +
         "Return the current process's effective group id.");
-    @Hide(OS.NT)
+    @Hider.Hide(OS.NT)
     public static int getegid() {
         return posix.getegid();
     }
@@ -507,7 +509,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__geteuid = new PyString(
         "geteuid() -> euid\n\n" +
         "Return the current process's effective user id.");
-    @Hide(OS.NT)
+    @Hider.Hide(OS.NT)
     public static int geteuid() {
         return posix.geteuid();
     }
@@ -515,7 +517,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__getgid = new PyString(
         "getgid() -> gid\n\n" +
         "Return the current process's group id.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static int getgid() {
         return posix.getgid();
     }
@@ -523,15 +525,21 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__getlogin = new PyString(
         "getlogin() -> string\n\n" +
         "Return the actual login name.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static PyObject getlogin() {
-        return new PyString(posix.getlogin());
+        String login = posix.getlogin();
+        if (login == null) {
+            // recommend according to https://docs.python.org/2/library/os.html#os.getlogin
+            throw Py.OSError(
+                    "getlogin OS call failed. Preferentially use os.getenv('LOGNAME') instead.");
+        }
+        return new PyString(login);
     }
 
     public static PyString __doc__getppid = new PyString(
         "getppid() -> ppid\n\n" +
         "Return the parent's process id.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static int getppid() {
         return posix.getppid();
     }
@@ -539,7 +547,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__getuid = new PyString(
         "getuid() -> uid\n\n" +
         "Return the current process's user id.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static int getuid() {
         return posix.getuid();
     }
@@ -548,7 +556,7 @@ public class PosixModule implements ClassDictInit {
         "getpid() -> pid\n\n" +
         "Return the current process id");
 
-    @Hide(posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(posixImpl = Hider.PosixImpl.JAVA)
     public static int getpid() {
         return posix.getpid();
     }
@@ -556,7 +564,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__getpgrp = new PyString(
         "getpgrp() -> pgrp\n\n" +
         "Return the current process group id.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static int getpgrp() {
         return posix.getpgrp();
     }
@@ -567,7 +575,7 @@ public class PosixModule implements ClassDictInit {
         "isatty(fd) -> bool\n\n" +
         "Return True if the file descriptor 'fd' is an open file descriptor\n" +
         "connected to the slave end of a terminal.");
-    @Hide(posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(posixImpl = Hider.PosixImpl.JAVA)
     public static boolean isatty(PyObject fdObj) {
         Object tojava = fdObj.__tojava__(IOBase.class);
         if (tojava != Py.NoConversion) {
@@ -601,7 +609,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__kill = new PyString(
         "kill(pid, sig)\n\n" +
         "Kill a process with a signal.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static void kill(int pid, int sig) {
         if (posix.kill(pid, sig) < 0) {
             throw errorFromErrno();
@@ -612,7 +620,7 @@ public class PosixModule implements ClassDictInit {
         "lchmod(path, mode)\n\n" +
         "Change the access permissions of a file. If path is a symlink, this\n" +
         "affects the link itself rather than the target.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static void lchmod(PyObject path, int mode) {
         if (posix.lchmod(absolutePath(path).toString(), mode) < 0) {
             throw errorFromErrno(path);
@@ -623,7 +631,7 @@ public class PosixModule implements ClassDictInit {
         "lchown(path, uid, gid)\n\n" +
         "Change the owner and group id of path to the numeric uid and gid.\n" +
         "This function will not follow symbolic links.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static void lchown(PyObject path, int uid, int gid) {
         if (posix.lchown(absolutePath(path).toString(), uid, gid) < 0) {
             throw errorFromErrno(path);
@@ -634,7 +642,7 @@ public class PosixModule implements ClassDictInit {
         "link(src, dst)\n\n" +
         "Create a hard link to a file.");
 
-    @Hide(OS.NT)
+    @Hider.Hide(OS.NT)
     public static void link(PyObject src, PyObject dst) {
         try {
             Files.createLink(Paths.get(asPath(dst)), Paths.get(asPath(src)));
@@ -670,9 +678,16 @@ public class PosixModule implements ClassDictInit {
             throw Py.OSError("listdir(): an unknown error occurred: " + path);
         }
 
+        // Return names as bytes or unicode according to the type of the original argument
         PyList list = new PyList();
-        for (String name : names) {
-            list.append(Py.newStringOrUnicode(path, name));
+        if (path instanceof PyUnicode) {
+            for (String name : names) {
+                list.append(Py.newUnicode(name));
+            }
+        } else {
+            for (String name : names) {
+                list.append(Py.fileSystemEncode(name));
+            }
         }
         return list;
     }
@@ -842,7 +857,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__readlink = new PyString(
         "readlink(path) -> path\n\n" +
         "Return a string representing the path to which the symbolic link points.");
-    @Hide(OS.NT)
+    @Hider.Hide(OS.NT)
     public static PyString readlink(PyObject path) {
         try {
             return Py.newStringOrUnicode(path, Files.readSymbolicLink(absolutePath(path)).toString());
@@ -893,7 +908,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__setpgrp = new PyString(
         "setpgrp()\n\n" +
         "Make this process a session leader.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static void setpgrp() {
         if (posix.setpgrp(0, 0) < 0) {
             throw errorFromErrno();
@@ -903,7 +918,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__setsid = new PyString(
         "setsid()\n\n" +
         "Call the system call setsid().");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static void setsid() {
         if (posix.setsid() < 0) {
             throw errorFromErrno();
@@ -931,7 +946,7 @@ public class PosixModule implements ClassDictInit {
         "symlink(src, dst)\n\n" +
         "Create a symbolic link pointing to src named dst.");
 
-    @Hide(OS.NT)
+    @Hider.Hide(OS.NT)
     public static void symlink(PyObject src, PyObject dst) {
         try {
             Files.createSymbolicLink(Paths.get(asPath(dst)), Paths.get(asPath(src)));
@@ -952,7 +967,7 @@ public class PosixModule implements ClassDictInit {
         "times() -> (utime, stime, cutime, cstime, elapsed_time)\n\n" +
         "Return a tuple of floating point numbers indicating process times.");
 
-    @Hide(posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(posixImpl = Hider.PosixImpl.JAVA)
     public static PyTuple times() {
         Times times = posix.times();
         long CLK_TCK = Sysconf._SC_CLK_TCK.longValue();
@@ -968,7 +983,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__umask = new PyString(
         "umask(new_mask) -> old_mask\n\n" +
         "Set the current numeric umask and return the previous umask.");
-    @Hide(posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(posixImpl = Hider.PosixImpl.JAVA)
     public static int umask(int mask) {
         return posix.umask(mask);
     }
@@ -1027,172 +1042,69 @@ public class PosixModule implements ClassDictInit {
      * @return PyTuple containing sysname, nodename, release, version, machine
      */
     public static PyTuple uname() {
-        if (uname_cache != null) {
-            return uname_cache;
-        }
-// todo: Giving os.uname a windows-implementation might break platform.uname. Check this!
-        String sysname = System.getProperty("os.name");
-        String sysrelease;
-        boolean win;
-        if (sysname.equals("Mac OS X")) {
-            sysname = "Darwin";
-            win = false;
-            try {
-                Process p = Runtime.getRuntime().exec("uname -r");
-                java.io.BufferedReader br = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(p.getInputStream()));
-                sysrelease = br.readLine();
-                // to end the process sanely in case we deal with some
-                // implementation that emits additional new-lines:
-                while (br.readLine() != null) {
-                    ;
-                }
-                br.close();
-                if (p.waitFor() != 0) {
-                    sysrelease = "";
-                }
-            } catch (Exception e) {
-                sysrelease = "";
-            }
-        } else {
-            win = sysname.startsWith("Windows");
-            if (win) {
-                sysrelease = sysname.length() > 7 ? sysname.substring(8) :
-                        System.getProperty("os.version");
+        if (uname_cache == null) {
+            // First call: have to construct the result.
+            String sysname = System.getProperty("os.name");
+            String sysrelease, nodename, machine;
+            boolean win = false;
+
+            if (sysname.equals("Mac OS X")) {
+                sysname = "Darwin";
+                sysrelease = Py.getCommandResult("uname", "-r");
+            } else if (sysname.startsWith("Windows")) {
+                sysrelease = sysname.length() > 7 ? sysname.substring(8)
+                        : System.getProperty("os.version", "");
                 sysname = "Windows";
+                win = true;
             } else {
-                sysrelease = System.getProperty("os.version");
+                sysrelease = System.getProperty("os.version", "");
             }
-        }
 
-        String uname_nodename;
-        try {
-            uname_nodename = java.net.InetAddress.getLocalHost().getHostName();
-        } catch (Exception e) {
-            // Do nothing to leverage fallback
-            uname_nodename = null;
-        }
-        if (uname_nodename == null && win) {
-            uname_nodename = System.getenv("USERDOMAIN");
-        }
-        if (uname_nodename == null) {
             try {
-                Process p = Runtime.getRuntime().exec(
-                        win ? "hostname" : "uname -n");
-                java.io.BufferedReader br = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(p.getInputStream()));
-                uname_nodename = br.readLine();
-                // to end the process sanely in case we deal with some
-                // implementation that emits additional new-lines:
-                while (br.readLine() != null) {
-                    ;
-                }
-                br.close();
-                if (p.waitFor() != 0) {
-                    uname_nodename = "";
-                }
+                nodename = java.net.InetAddress.getLocalHost().getHostName();
             } catch (Exception e) {
-                uname_nodename = "";
-            }
-        }
-
-        String uname_sysver;
-        try {
-            Process p = Runtime.getRuntime().exec(
-                    win ? "cmd.exe /C ver" : "uname -v");
-            java.io.BufferedReader br = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(p.getInputStream()));
-            uname_sysver = br.readLine();
-            while (uname_sysver != null && uname_sysver.length() == 0) {
-                uname_sysver = br.readLine();
-            }
-            // to end the process sanely in case we deal with some
-            // implementation that emits additional new-lines:
-            while (br.readLine() != null) {
-                ;
-            }
-            br.close();
-            if (p.waitFor() != 0) {
-                // No fallback for sysver available
-                uname_sysver = "";
-            }
-            if (win && uname_sysver.length() > 0) {
-                int start = uname_sysver.toLowerCase().indexOf("version ");
-                if (start != -1) {
-                    start += 8;
-                    int end = uname_sysver.length();
-                    if (uname_sysver.endsWith("]")) {
-                        --end;
+                // If that fails, try the shell.
+                if (win) {
+                    nodename = Py.getenv("USERDOMAIN", "");
+                    if (nodename.isEmpty()) {
+                        nodename = Py.getCommandResult("hostname");
                     }
-                    uname_sysver = uname_sysver.substring(start, end);
-                }
-            }
-        } catch (Exception e) {
-            uname_sysver = "";
-        }
-
-        String uname_machine;
-        try {
-            if (win) {
-                String machine = System.getenv("PROCESSOR_ARCHITECTURE");
-                if (machine.equals("x86")) {
-                    // maybe 32-bit process running on 64 bit machine
-                    machine = System.getenv("PROCESSOR_ARCHITEW6432");
-                }
-                // if machine == null it's actually a 32-bit machine
-                uname_machine = machine == null ? "x86" : machine;
-// We refrain from this normalization in order to match platform.uname behavior on Windows:
-/*              if (machine == null) {
-                    uname_machine = "i686";
-                } else if (machine.equals("AMD64") || machine.equals("EM64T")) {
-                    uname_machine = "x86_64";
-                } else if (machine.equals("IA64")) {
-                    uname_machine = "ia64";
                 } else {
-                    uname_machine = machine.toLowerCase();
-                } */
-            } else {
-                Process p = Runtime.getRuntime().exec("uname -m");
-                java.io.BufferedReader br = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(p.getInputStream()));
-                uname_machine = br.readLine();
-                // to end the process sanely in case we deal with some
-                // implementation that emits additional new-lines:
-                while (br.readLine() != null) {
-                    ;
-                }
-                br.close();
-                if (p.waitFor() != 0) {
-                    // To leverage os.arch-fallback:
-                    uname_machine = null;
+                    nodename = Py.getCommandResult("uname", "-n");
                 }
             }
-        } catch (Exception e) {
-            // To leverage os.arch-fallback:
-            uname_machine = null;
-        }
-        if (uname_machine == null) {
-            String machine = System.getProperty("os.arch");
-            if (machine == null) {
-                uname_machine = "";
-            } else if (machine.equals("amd64")) {
-                // Normalize the common amd64-case to x86_64:
-                uname_machine = "x86_64";
-            } else if (machine.equals("x86")) {
-                uname_machine = "i686";
-            } else {
-                uname_machine = machine;
-            }
-        }
 
-        PyObject[] vals = {
-                Py.newString(sysname),
-                Py.newString(uname_nodename),
-                Py.newString(sysrelease),
-                Py.newString(uname_sysver),
-                Py.newString(uname_machine)
-        };
-        uname_cache = new PyTuple(vals, false);
+            String sysver = PySystemState.getSystemVersionString();
+
+            if (win) {
+                // Check if 32-bit process on a 64 bit machine (compare platform.py)
+                machine = Py.getenv("PROCESSOR_ARCHITEW6432", "");
+                if (machine.isEmpty()) {
+                    // Otherwise, this contains the value (or we default to null)
+                    machine = Py.getenv("PROCESSOR_ARCHITECTURE", "");
+                }
+            } else {
+                machine = Py.getCommandResult("uname", "-m");
+            }
+
+            if (machine.isEmpty()) {
+                machine = System.getProperty("os.arch", "");
+                if (machine.equals("amd64")) {
+                    // 64-bit processor presents as x86_64 on Linux and AMD64 on Windows.
+                    machine = win ? "AMD64" : "x86_64";
+                } else if (machine.equals("x86")) {
+                    machine = "i686";
+                }
+            }
+
+            uname_cache = new PyTuple(new PyObject[] {
+                        Py.fileSystemEncode(sysname),
+                        Py.fileSystemEncode(nodename),
+                        Py.fileSystemEncode(sysrelease),
+                        Py.fileSystemEncode(sysver),
+                        Py.fileSystemEncode(machine)},
+                false);
+        }
         return uname_cache;
     }
 
@@ -1270,7 +1182,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__wait = new PyString(
         "wait() -> (pid, status)\n\n" +
         "Wait for completion of a child process.");
-    @Hide(value=OS.NT, posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(value=OS.NT, posixImpl = Hider.PosixImpl.JAVA)
     public static PyObject wait$() {
         int[] status = new int[1];
         int pid = posix.wait(status);
@@ -1283,7 +1195,7 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__waitpid = new PyString(
         "wait() -> (pid, status)\n\n" +
         "Wait for completion of a child process.");
-    @Hide(posixImpl = PosixImpl.JAVA)
+    @Hider.Hide(posixImpl = Hider.PosixImpl.JAVA)
     public static PyObject waitpid(int pid, int options) {
         int[] status = new int[1];
         pid = posix.waitpid(pid, status, options);
@@ -1296,9 +1208,9 @@ public class PosixModule implements ClassDictInit {
     public static PyString __doc__write = new PyString(
             "write(fd, string) -> byteswritten\n\n" +
             "Write a string to a file descriptor.");
-    public static int write(PyObject fd, BufferProtocol bytes) {
-        // Get a buffer view: we can cope with N-dimensional data, but not strided data.
-        try (PyBuffer buf = bytes.getBuffer(PyBUF.ND)) {
+
+    public static int write(PyObject fd, PyObject bytes) {
+        try (PyBuffer buf = ((BufferProtocol) bytes).getBuffer(PyBUF.SIMPLE)) {
             // Get a ByteBuffer of that data, setting the position and limit to the real data.
             ByteBuffer bb = buf.getNIOByteBuffer();
             Object javaobj = fd.__tojava__(RawIOBase.class);
@@ -1311,6 +1223,9 @@ public class PosixModule implements ClassDictInit {
             } else {
                 return posix.write(getFD(fd).getIntFD(), bb, bb.position());
             }
+        } catch (ClassCastException e) {
+            throw Py.TypeError(
+                    "write() argument 2 must be string or buffer, not " + bytes.getType());
         }
     }
 
@@ -1371,25 +1286,24 @@ public class PosixModule implements ClassDictInit {
             return environ;
         }
         for (Map.Entry<String, String> entry : env.entrySet()) {
+            // The shell restricts names to a subset of ASCII and values are encoded byte strings.
             environ.__setitem__(
-                    Py.newStringOrUnicode(entry.getKey()),
-                    Py.newStringOrUnicode(entry.getValue()));
+                    Py.newString(entry.getKey()),
+                    Py.fileSystemEncode(entry.getValue()));
         }
         return environ;
     }
 
     /**
-     * Return a path as a String from a PyObject
+     * Return a path as a String from a PyObject, which must be <code>str</code> or
+     * <code>unicode</code>. If the path is a <code>str</code> (that is, <code>bytes</code>), it is
+     * interpreted into Unicode using the file system encoding.
      *
      * @param path a PyObject, raising a TypeError if an invalid path type
      * @return a String path
      */
     private static String asPath(PyObject path) {
-        if (path instanceof PyString) {
-            return path.toString();
-        }
-        throw Py.TypeError(String.format("coercing to Unicode: need string, %s type found",
-                                         path.getType().fastGetName()));
+        return Py.fileSystemDecode(path);
     }
 
     /**

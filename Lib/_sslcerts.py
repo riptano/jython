@@ -10,8 +10,15 @@ from java.security import KeyStore, Security, InvalidAlgorithmParameterException
 from java.security.cert import CertificateException, CertificateFactory
 from java.security.interfaces import RSAPrivateCrtKey
 from java.security.interfaces import RSAPublicKey
-from javax.net.ssl import (
-    X509KeyManager, X509TrustManager, KeyManagerFactory, SSLContext, TrustManager, TrustManagerFactory)
+from javax.net.ssl import X509KeyManager, X509TrustManager, KeyManagerFactory, SSLContext
+
+try:
+    # jarjar-ed version
+    from org.python.netty.handler.ssl.util import SimpleTrustManagerFactory
+
+except ImportError:
+    # dev version from extlibs
+    from io.netty.handler.ssl.util import SimpleTrustManagerFactory
 
 try:
     # dev version from extlibs OR if in classpath.
@@ -33,9 +40,10 @@ try:
     from org.bouncycastle.jce.provider import BouncyCastleProvider
     from org.bouncycastle.jce import ECNamedCurveTable
     from org.bouncycastle.jce.spec import ECNamedCurveSpec
-    from org.bouncycastle.openssl import PEMKeyPair, PEMParser, PEMEncryptedKeyPair, PEMException, \
-        EncryptionException
+    from org.bouncycastle.openssl import PEMKeyPair, PEMParser, PEMEncryptedKeyPair, \
+        PEMException, EncryptionException
     from org.bouncycastle.openssl.jcajce import JcaPEMKeyConverter, JcePEMDecryptorProviderBuilder
+    from org.bouncycastle.util.encoders import DecoderException
 except ImportError:
     # jarjar-ed version
     from org.python.bouncycastle.asn1.pkcs import PrivateKeyInfo
@@ -44,9 +52,10 @@ except ImportError:
     from org.python.bouncycastle.jce.provider import BouncyCastleProvider
     from org.python.bouncycastle.jce import ECNamedCurveTable
     from org.python.bouncycastle.jce.spec import ECNamedCurveSpec
-    from org.python.bouncycastle.openssl import PEMKeyPair, PEMParser, PEMEncryptedKeyPair, PEMException, \
-        EncryptionException
+    from org.python.bouncycastle.openssl import PEMKeyPair, PEMParser, PEMEncryptedKeyPair, \
+        PEMException, EncryptionException
     from org.python.bouncycastle.openssl.jcajce import JcaPEMKeyConverter, JcePEMDecryptorProviderBuilder
+    from org.python.bouncycastle.util.encoders import DecoderException
 
 log = logging.getLogger("_socket")
 Security.addProvider(BouncyCastleProvider())
@@ -64,7 +73,7 @@ def _get_ca_certs_trust_manager(ca_certs=None):
             for cert in cf.generateCertificates(BufferedInputStream(f)):
                 trust_store.setCertificateEntry(str(uuid.uuid4()), cert)
                 num_certs_installed += 1
-    tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+    tmf = SimpleTrustManagerFactory.getInstance(SimpleTrustManagerFactory.getDefaultAlgorithm())
     tmf.init(trust_store)
     log.debug("Installed %s certificates", num_certs_installed, extra={"sock": "*"})
     return tmf
@@ -236,6 +245,11 @@ def _extract_cert_from_data(f, password=None, key_converter=None, cert_converter
 
 
 def _read_pem_cert_from_data(f, password, key_converter, cert_converter):
+
+    def PEM_SSLError(err): # Shorthand
+        from _socket import SSLError, SSL_ERROR_SSL
+        return SSLError(SSL_ERROR_SSL, "PEM lib ({})".format(err))
+
     certs = []
     private_key = None
 
@@ -248,8 +262,9 @@ def _read_pem_cert_from_data(f, password, key_converter, cert_converter):
             try:
                 obj = PEMParser(br).readObject()
             except PEMException as err:
-                from _socket import SSLError, SSL_ERROR_SSL
-                raise SSLError(SSL_ERROR_SSL, "PEM lib ({})".format(err))
+                raise PEM_SSLError(err)
+            except DecoderException as err:
+                raise PEM_SSLError(err)
 
             if obj is None:
                 break
@@ -265,8 +280,7 @@ def _read_pem_cert_from_data(f, password, key_converter, cert_converter):
                 try:
                     key_pair = key_converter.getKeyPair(obj.decryptKeyPair(provider))
                 except EncryptionException as err:
-                    from _socket import SSLError, SSL_ERROR_SSL
-                    raise SSLError(SSL_ERROR_SSL, "PEM lib ({})".format(err))
+                    raise PEM_SSLError(err)
 
                 private_key = key_pair.getPrivate()
             else:
@@ -329,7 +343,7 @@ class CompositeX509KeyManager(X509KeyManager):
     
     def getPrivateKey(self, alias):
         for key_manager in self.key_managers:
-            private_key = keyManager.getPrivateKey(alias)
+            private_key = key_manager.getPrivateKey(alias)
             if private_key:
                 return private_key
         return None
@@ -404,14 +418,13 @@ class CompositeX509TrustManager(X509TrustManager):
         return certs
 
 
-# To use with CERT_NONE
-class NoVerifyX509TrustManager(X509TrustManager):
+class CompositeX509TrustManagerFactory(SimpleTrustManagerFactory):
 
-    def checkClientTrusted(self, chain, auth_type):
+    def __init__(self, trust_managers):
+        self._trust_manager = CompositeX509TrustManager(trust_managers)
+
+    def engineInit(self, arg):
         pass
 
-    def checkServerTrusted(self, chain, auth_type):
-        pass
-
-    def getAcceptedIssuers(self):
-        return None
+    def engineGetTrustManagers(self):
+        return [self._trust_manager]

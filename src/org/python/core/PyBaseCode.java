@@ -4,7 +4,6 @@
  */
 package org.python.core;
 
-import org.python.modules._systemrestart;
 import com.google.common.base.CharMatcher;
 
 public abstract class PyBaseCode extends PyCode {
@@ -103,21 +102,16 @@ public abstract class PyBaseCode extends PyCode {
         ts.exception = previous_exception;
 
         ts.frame = ts.frame.f_back;
-
-        // Check for interruption, which is used for restarting the interpreter
-        // on Jython
-        if (ts.getSystemState()._systemRestart && Thread.currentThread().isInterrupted()) {
-            throw new PyException(_systemrestart.SystemRestart);
-        }
         return ret;
     }
 
     public PyObject call(ThreadState state, PyObject globals, PyObject[] defaults,
                          PyObject closure)
     {
-        if (co_argcount != 0 || varargs || varkwargs)
+        if (co_argcount != 0 || varargs || varkwargs) {
             return call(state, Py.EmptyObjects, Py.NoKeywords, globals, defaults,
                         closure);
+        }
         PyFrame frame = new PyFrame(this, globals);
         if (co_flags.isFlagSet(CodeFlag.CO_GENERATOR)) {
             return new PyGenerator(frame, closure);
@@ -128,9 +122,10 @@ public abstract class PyBaseCode extends PyCode {
     public PyObject call(ThreadState state, PyObject arg1, PyObject globals, PyObject[] defaults,
                          PyObject closure)
     {
-        if (co_argcount != 1 || varargs || varkwargs)
+        if (co_argcount != 1 || varargs || varkwargs) {
             return call(state, new PyObject[] {arg1},
                         Py.NoKeywords, globals, defaults, closure);
+        }
         PyFrame frame = new PyFrame(this, globals);
         frame.f_fastlocals[0] = arg1;
         if (co_flags.isFlagSet(CodeFlag.CO_GENERATOR)) {
@@ -142,9 +137,10 @@ public abstract class PyBaseCode extends PyCode {
     public PyObject call(ThreadState state, PyObject arg1, PyObject arg2, PyObject globals,
                          PyObject[] defaults, PyObject closure)
     {
-        if (co_argcount != 2 || varargs || varkwargs)
+        if (co_argcount != 2 || varargs || varkwargs) {
             return call(state, new PyObject[] {arg1, arg2},
                         Py.NoKeywords, globals, defaults, closure);
+        }
         PyFrame frame = new PyFrame(this, globals);
         frame.f_fastlocals[0] = arg1;
         frame.f_fastlocals[1] = arg2;
@@ -158,9 +154,10 @@ public abstract class PyBaseCode extends PyCode {
                          PyObject globals, PyObject[] defaults,
                          PyObject closure)
     {
-        if (co_argcount != 3 || varargs || varkwargs)
+        if (co_argcount != 3 || varargs || varkwargs) {
             return call(state, new PyObject[] {arg1, arg2, arg3},
                         Py.NoKeywords, globals, defaults, closure);
+        }
         PyFrame frame = new PyFrame(this, globals);
         frame.f_fastlocals[0] = arg1;
         frame.f_fastlocals[1] = arg2;
@@ -170,14 +167,15 @@ public abstract class PyBaseCode extends PyCode {
         }
         return call(state, frame, closure);
     }
-    
+
     @Override
     public PyObject call(ThreadState state, PyObject arg1, PyObject arg2,
             PyObject arg3, PyObject arg4, PyObject globals,
             PyObject[] defaults, PyObject closure) {
-        if (co_argcount != 4 || varargs || varkwargs)
+        if (co_argcount != 4 || varargs || varkwargs) {
             return call(state, new PyObject[]{arg1, arg2, arg3, arg4},
                         Py.NoKeywords, globals, defaults, closure);
+        }
         PyFrame frame = new PyFrame(this, globals);
         frame.f_fastlocals[0] = arg1;
         frame.f_fastlocals[1] = arg2;
@@ -256,7 +254,7 @@ public abstract class PyBaseCode extends PyCode {
                                 co_name,
                                 Py.newUnicode(keyword).encode("ascii", "replace")));
                     }
-                    if (CharMatcher.ASCII.matchesAllOf(keyword)) {
+                    if (CharMatcher.ascii().matchesAllOf(keyword)) {
                         kwdict.__setitem__(keyword, value);
                     } else {
                         kwdict.__setitem__(Py.newUnicode(keyword), value);
@@ -309,8 +307,10 @@ public abstract class PyBaseCode extends PyCode {
     }
 
     public String toString() {
-        return String.format("<code object %.100s at %s, file \"%.300s\", line %d>",
-                             co_name, Py.idstr(this), co_filename, co_firstlineno);
+        // Result must be convertible to a str (for __repr__()), but let's make it fully printable.
+        String filename = PyString.encode_UnicodeEscape(co_filename, '"');
+        return String.format("<code object %.100s at %s, file %.300s, line %d>",
+                             co_name, Py.idstr(this), filename, co_firstlineno);
     }
 
     protected abstract PyObject interpret(PyFrame f, ThreadState ts);

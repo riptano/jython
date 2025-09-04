@@ -12,9 +12,9 @@ public interface TypeBuilder {
 
     public PyObject getDict(PyType type);
 
-    public Class getTypeClass();
+    public Class<? extends PyObject> getTypeClass();
 
-    public Class getBase();
+    public Class<?> getBase();
 
     public boolean getIsBaseType();
 

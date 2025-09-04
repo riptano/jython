@@ -7,6 +7,7 @@ import java.util.Set;
 import org.apache.tools.ant.BuildException;
 import org.python.core.PyException;
 import org.python.core.PySystemState;
+import org.python.core.RegistryKey;
 import org.python.core.imp;
 import org.python.modules._py_compile;
 
@@ -26,16 +27,20 @@ public class JycompileAntTask extends GlobMatchingTask {
             log("Compiling 1 file");
         }
         Properties props = new Properties();
-        props.setProperty(PySystemState.PYTHON_CACHEDIR_SKIP, "true");
+        props.setProperty(RegistryKey.PYTHON_CACHEDIR_SKIP, "true");
         PySystemState.initialize(System.getProperties(), props);
         for (File src : toCompile) {
             try {
                 String name = _py_compile.getModuleName(src);
                 String compiledFilePath = name.replace('.', '/');
                 if (src.getName().endsWith("__init__.py")) {
-                    compiledFilePath += "/__init__";
+                    compiledFilePath += "/__init__.py";
+                } else {
+                    compiledFilePath += ".py";
+                    // so we can apply imp.makeCompiledFilename
                 }
-                File compiled = new File(destDir, compiledFilePath + "$py.class");
+                File compiled = new File(destDir,
+                        imp.makeCompiledFilename(compiledFilePath));
                 compile(src, compiled, name);
             } catch (RuntimeException e) {
                 log("Could not compile " + src);
@@ -69,6 +74,6 @@ public class JycompileAntTask extends GlobMatchingTask {
     }
 
     protected String getTo() {
-        return "*$py.class";
+        return imp.makeCompiledFilename(getFrom());
     }
 }

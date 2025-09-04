@@ -7,8 +7,10 @@ import java.util.concurrent.ConcurrentMap;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import org.python.core.BuiltinDocs;
 import org.python.core.Py;
 import org.python.core.PyDictionary;
+import org.python.core.PyException;
 import org.python.core.PyObject;
 import org.python.core.PyTuple;
 import org.python.core.PyType;
@@ -20,11 +22,6 @@ import org.python.expose.ExposedMethod;
 import org.python.expose.ExposedNew;
 import org.python.expose.ExposedSet;
 import org.python.expose.ExposedType;
-
-import com.google.common.collect.MapMaker;
-import com.google.common.collect.ComputationException;
-import com.google.common.base.Function;
-import org.python.core.BuiltinDocs;
 
 /**
  * PyDefaultDict - This is a subclass of the builtin dict(PyDictionary) class. It supports
@@ -60,7 +57,11 @@ public class PyDefaultDict extends PyDictionary implements Traverseproc {
         backingMap = CacheBuilder.newBuilder().build(
                 new CacheLoader<PyObject, PyObject>() {
                     public PyObject load(PyObject key) {
-                        return __missing__(key);
+                        try {
+                            return __missing__(key);
+                        } catch (RuntimeException ex) {
+                            throw new MissingThrownException(ex);
+                        }
                     }
                 });
     }
@@ -165,7 +166,18 @@ public class PyDefaultDict extends PyDictionary implements Traverseproc {
     protected final PyObject defaultdict___getitem__(PyObject key) {
         try {
             return backingMap.get(key);
+        } catch (PyException pe) {
+            /* LoadingCache#get() don't throw any PyException itself and it
+             * prevents those raised in CacheLoader#load() to get through
+             * without being wrapped in UncheckedExecutionException, so this
+             * PyException must be from key#hashCode(). We can propagated it to
+             * caller as it is. */
+            throw pe;
         } catch (Exception ex) {
+            Throwable cause = ex.getCause();
+            if (cause != null && cause instanceof MissingThrownException) {
+                throw ((MissingThrownException) cause).thrownByMissing;
+            }
             throw Py.KeyError(key);
         }
     }
@@ -219,5 +231,13 @@ public class PyDefaultDict extends PyDictionary implements Traverseproc {
             return false;
         }
         return backingMap.asMap().containsKey(ob) || backingMap.asMap().containsValue(ob);
+    }
+
+    private static class MissingThrownException extends RuntimeException {
+        final RuntimeException thrownByMissing;
+        MissingThrownException(RuntimeException thrownByMissing) {
+            super(thrownByMissing);
+            this.thrownByMissing = thrownByMissing;
+        }
     }
 }

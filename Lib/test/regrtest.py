@@ -378,7 +378,6 @@ def main(tests=None, testdir=None, verbose=0, quiet=False,
     test_times = []
     test_support.verbose = verbose      # Tell tests to be moderately quiet
     test_support.use_resources = use_resources
-    test_support.junit_xml_dir = junit_xml
     save_modules = sys.modules.keys()
 
     skips = _ExpectedSkips()
@@ -397,6 +396,22 @@ def main(tests=None, testdir=None, verbose=0, quiet=False,
     # Prevent reporting unexpected success in things we failed to try
     failures.keep_only(tests)
     skips.keep_only(tests)
+
+    # Output some platform information. Loosely based on CPython 3.6 regrtest.
+    if (verbose or len(tests)>1) and not (quiet or single):
+        # Print basic platform information
+        for t in sys.version.splitlines():
+            print "==", t
+        print "== platform:", sys.platform
+        print "== encodings: stdin=%s, stdout=%s, FS=%s" % (
+            sys.stdin.encoding, sys.stdout.encoding,
+            sys.getfilesystemencoding())
+        try:
+            import locale
+            print "== locale: default=%s, actual=%s" % (
+                locale.getdefaultlocale(), locale.getlocale())
+        except ImportError:
+            pass
 
     for test in tests:
         if not quiet:
@@ -584,6 +599,7 @@ def runtest_inner(test, verbose, quiet, test_times,
             save_stderr = sys.stderr
             sys.stdout = stdout = Tee(sys.stdout)
             sys.stderr = stderr = Tee(sys.stderr)
+            test_support.junit_xml_dir = junit_xml_dir
         try:
             if capture_stdout:
                 sys.stdout = capture_stdout
@@ -614,6 +630,7 @@ def runtest_inner(test, verbose, quiet, test_times,
             test_times.append((test_time, test))
         finally:
             sys.stdout = save_stdout
+            test_support.junit_xml_dir = None
             if junit_xml_dir:
                 sys.stderr = save_stderr
                 test_time = time.time() - start_time
@@ -1306,6 +1323,7 @@ _failures = {
         test_peepholer
         test_pyclbr
         test_pyexpat
+        test_ssl        # overridden by test_ssl_jy
         test_stringprep # UnicodeDecodeError
         test_threadsignals
         test_transformer
@@ -1328,7 +1346,6 @@ _failures = {
         test_locale
         test_profile
         test_pydoc             # Hangs with prompt (Windows)
-        test_select            # Unconnected client socket should be selectable
         test_sundry            # ImportError: No module named audiodev
 
         test_sys_setprofile    # revisit for GC
@@ -1337,8 +1354,8 @@ _failures = {
         # Unreliable tests 
         test_asynchat
         # test_gc                # Rare failures depending on timing of Java gc
-        # test_logging
-        test_tarfile           # flakey (Windows)
+        test_logging           # Hangs, though ok run singly. Issue #2536
+        test_tarfile           # flakey everywhere. Issue #2574
         # test_urllib2net        # unexpected output makes this a failure to regrtest.py
 
         # Failing tests here are because of lack of STARTTLS; see http://bugs.jython.org/issue2447
@@ -1354,16 +1371,19 @@ _failures = {
 
     'java.nt':     # Expected to fail on Windows
         """
-        test_mailbox           # fails miserably and ruins other tests
-        test_os_jy             # Locale tests run and fail on Cygwin
-        test_popen             # http://bugs.python.org/issue1559298
-        test_runpy             # OSError: unlink()
-        test_urllib2           # file not on local host (likely Windows only)
+        test_calendar           # Same, covered by test_calendar_jy
+        test_email              # test_email_jy overrides for correct locale handling
+        test_mailbox            # fails miserably and ruins other tests
+        # test_popen            # Passes, but see http://bugs.python.org/issue1559298
+        test_select_new         # Hangs (Windows), though ok run singly
+        test_strptime           # Fails on JDK 9+ due to locale strings change
+                                # Covered by test_strptime_jy until the beta locale 
+                                # behaviour becomes the default
+        test_urllib2            # file not on local host (likely Windows only)
         """,
 
     'java.posix':   # Expected to fail on Linux
         """
-        test_codecencodings_tw  # Fails in test_multibytecodec_support.py
         test_jython_launcher    # /usr/bin/env: python2.7 -E: No such file or directory
 
         # These leak file handles on a grand scale (observed on Ubuntu 14.04),

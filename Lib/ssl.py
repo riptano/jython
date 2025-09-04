@@ -6,7 +6,6 @@ import uuid
 from java.io import BufferedInputStream
 from java.security import KeyStore, KeyStoreException
 from java.security.cert import CertificateParsingException
-from javax.net.ssl import TrustManagerFactory
 from javax.naming.ldap import LdapName
 from java.lang import IllegalArgumentException, System
 import logging
@@ -19,11 +18,16 @@ import threading
 try:
     # jarjar-ed version
     from org.python.netty.channel import ChannelInitializer
-    from org.python.netty.handler.ssl import SslHandler
+    from org.python.netty.handler.ssl import SslHandler, SslProvider, SslContextBuilder, ClientAuth
+    from org.python.netty.handler.ssl.util import SimpleTrustManagerFactory, InsecureTrustManagerFactory
+    from org.python.netty.buffer import ByteBufAllocator
+
 except ImportError:
     # dev version from extlibs
     from io.netty.channel import ChannelInitializer
-    from io.netty.handler.ssl import SslHandler
+    from io.netty.handler.ssl import SslHandler, SslProvider, SslContextBuilder, ClientAuth
+    from io.netty.handler.ssl.util import SimpleTrustManagerFactory, InsecureTrustManagerFactory
+    from io.netty.buffer import ByteBufAllocator
 
 from _socket import (
     SSLError, raises_java_exception,
@@ -45,7 +49,7 @@ from _socket import (
     error as socket_error)
 
 from _sslcerts import _get_openssl_key_manager, _extract_cert_from_data, _extract_certs_for_paths, \
-    NoVerifyX509TrustManager, _str_hash_key_entry, _get_ecdh_parameter_spec, CompositeX509TrustManager
+    _str_hash_key_entry, _get_ecdh_parameter_spec, CompositeX509TrustManagerFactory
 from _sslcerts import SSLContext as _JavaSSLContext
 
 from java.text import SimpleDateFormat
@@ -55,6 +59,13 @@ from javax.naming.ldap import LdapName
 from javax.net.ssl import SSLException, SSLHandshakeException
 from javax.security.auth.x500 import X500Principal
 from org.ietf.jgss import Oid
+
+try:
+    # requires Java 8 or higher for this support
+    from javax.net.ssl import SNIHostName, SNIMatcher
+    HAS_SNI = True
+except ImportError:
+    HAS_SNI = False
 
 log = logging.getLogger("_socket")
 
@@ -67,6 +78,10 @@ _OPENSSL_API_VERSION = OPENSSL_VERSION_INFO
 
 CERT_NONE, CERT_OPTIONAL, CERT_REQUIRED = range(3)
 
+_CERT_TO_CLIENT_AUTH = {CERT_NONE: ClientAuth.NONE,
+                        CERT_OPTIONAL: ClientAuth.OPTIONAL,
+                        CERT_REQUIRED: ClientAuth.REQUIRE}
+
 # Do not support PROTOCOL_SSLv2, it is highly insecure and it is optional
 _, PROTOCOL_SSLv3, PROTOCOL_SSLv23, PROTOCOL_TLSv1, PROTOCOL_TLSv1_1, PROTOCOL_TLSv1_2 = range(6)
 _PROTOCOL_NAMES = {
@@ -77,15 +92,23 @@ _PROTOCOL_NAMES = {
     PROTOCOL_TLSv1_2: 'TLSv1.2'
 }
 
-OP_ALL, OP_NO_SSLv2, OP_NO_SSLv3, OP_NO_TLSv1 = range(4)
+OP_ALL = 0
+OP_NO_SSLv2 = 1
+OP_NO_SSLv3 = 2
+OP_NO_TLSv1 = 4
+OP_NO_TLSv1_1 = 8
+OP_NO_TLSv1_2 = 16
 OP_SINGLE_DH_USE, OP_NO_COMPRESSION, OP_CIPHER_SERVER_PREFERENCE, OP_SINGLE_ECDH_USE = 1048576, 131072, 4194304, 524288
 
 VERIFY_DEFAULT, VERIFY_CRL_CHECK_LEAF, VERIFY_CRL_CHECK_CHAIN, VERIFY_X509_STRICT = 0, 4, 12, 32
 
+HAS_TLSv1_3 = False
+
 CHANNEL_BINDING_TYPES = []
 
 # https://docs.python.org/2/library/ssl.html#ssl.HAS_ALPN etc...
-HAS_ALPN, HAS_NPN, HAS_ECDH, HAS_SNI = False, False, True, False
+HAS_ALPN, HAS_NPN, HAS_ECDH = False, False, True
+
 
 # TODO not supported on jython yet
 # Disable weak or insecure ciphers by default
@@ -290,7 +313,6 @@ def get_default_verify_paths():
 
     if java_cert_file is not None and os.path.isfile(java_cert_file):
         cafile = java_cert_file
-        capath = os.path.dirname(java_cert_file)
     else:
         if default_cert_dir_env is not None:
             capath = default_cert_dir_env if os.path.isdir(default_cert_dir_env) else None
@@ -307,7 +329,7 @@ def get_default_verify_paths():
                     capath = os.path.dirname(cafile)
 
     return DefaultVerifyPaths(cafile if os.path.isfile(cafile) else None,
-                              capath if os.path.isdir(capath) else None,
+                              capath if capath and os.path.isdir(capath) else None,
                               'SSL_CERT_FILE', default_cert_file_env,
                               'SSL_CERT_DIR', default_cert_dir_env)
 
@@ -578,12 +600,17 @@ class SSLSocket(object):
     def context(self):
         return self._context
 
+    @context.setter
+    def context(self, context):
+        self._context = context
+
     def setup_engine(self, addr):
         if self.engine is None:
             # http://stackoverflow.com/questions/13390964/java-ssl-fatal-error-80-unwrapping-net-record-after-adding-the-https-en
             self.engine = self._context._createSSLEngine(
                 addr, self.server_hostname,
-                cert_file=getattr(self, "certfile", None), key_file=getattr(self, "keyfile", None))
+                cert_file=getattr(self, "certfile", None), key_file=getattr(self, "keyfile", None),
+                server_side=self.server_side)
             self.engine.setUseClientMode(not self.server_side)
 
     def connect(self, addr):
@@ -666,12 +693,12 @@ class SSLSocket(object):
             pass
             # see
             # http://stackoverflow.com/questions/24628271/exception-in-netty-io-netty-util-concurrent-blockingoperationexception
-            # - handshake in the child thread pool
-        else:
-            self._sock._handle_channel_future(self._handshake_future, "SSL handshake")
+            # - we are doing this in the handler thread!
+            return
+        self._sock._handle_channel_future(handshake, "SSL handshake", wait=True)
 
     def dup(self):
-        raise NotImplemented("Can't dup() %s instances" %
+        raise NotImplementedError("Can't dup() %s instances" %
                              self.__class__.__name__)
 
     @raises_java_exception
@@ -1013,12 +1040,11 @@ def RAND_egd(path):
 def RAND_add(bytes, entropy):
     pass
 
-
 class SSLContext(object):
 
     _jsse_keyType_names = ('RSA', 'DSA', 'DH_RSA', 'DH_DSA', 'EC', 'EC_EC', 'EC_RSA')
 
-    def __init__(self, protocol):
+    def __init__(self, protocol, options=None):
         try:
             self._protocol_name = _PROTOCOL_NAMES[protocol]
         except KeyError:
@@ -1031,7 +1057,33 @@ class SSLContext(object):
         self._check_hostname = False
 
         # defaults from _ssl.c
-        self.options = OP_ALL | OP_NO_SSLv2 | OP_NO_SSLv3
+        if options:
+            self.options = options
+        else:
+            # secure defaults
+            self.options = OP_ALL | OP_NO_SSLv2 | OP_NO_SSLv3 | OP_NO_TLSv1 | OP_NO_TLSv1_1
+
+        protocols = _PROTOCOL_NAMES.values()
+        # psd: assuming darjus is right I should do the same change here
+        protocols.remove(_PROTOCOL_NAMES[PROTOCOL_SSLv23])  # darjus: at least my Java does not let me use v2
+        protocols.append('SSL')
+        if self.options == OP_ALL:
+            ## just use the whole list of _PROTOCOL_NAMES possibly in the future grab the JVM defaults
+            pass
+        else:
+            if OP_NO_SSLv2 & self.options:
+                protocols.remove('SSL')  # darjus: at least my Java does not let me use v2
+            if OP_NO_SSLv3 & self.options:
+                protocols.remove(_PROTOCOL_NAMES[PROTOCOL_SSLv3])
+            if OP_NO_TLSv1 & self.options:
+                protocols.remove(_PROTOCOL_NAMES[PROTOCOL_TLSv1])
+            if OP_NO_TLSv1_1 & self.options:
+                protocols.remove(_PROTOCOL_NAMES[PROTOCOL_TLSv1_1])
+            if OP_NO_TLSv1_2 & self.options:
+                protocols.remove(_PROTOCOL_NAMES[PROTOCOL_TLSv1_2])
+
+        self.allowed_protocols = protocols
+
         self._verify_flags = VERIFY_DEFAULT
         self._verify_mode = CERT_NONE
         self._ciphers = None
@@ -1044,6 +1096,8 @@ class SSLContext(object):
 
         self._key_managers = None
 
+        self._server_name_callback = None
+
     def wrap_socket(self, sock, server_side=False,
                     do_handshake_on_connect=True,
                     suppress_ragged_eofs=True,
@@ -1054,36 +1108,50 @@ class SSLContext(object):
                          server_hostname=server_hostname,
                          _context=self)
 
-    def _createSSLEngine(self, addr, hostname=None, cert_file=None, key_file=None):
-        trust_managers = [NoVerifyX509TrustManager()]
-        if self.verify_mode == CERT_REQUIRED:
-            tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+    def _createSSLEngine(self, addr, hostname=None, cert_file=None, key_file=None, server_side=False):
+        tmf = InsecureTrustManagerFactory.INSTANCE
+        if self.verify_mode != CERT_NONE:
+            # XXX need to refactor so we don't have to get trust managers twice
+            stmf = SimpleTrustManagerFactory.getInstance(SimpleTrustManagerFactory.getDefaultAlgorithm())
+            stmf.init(self._trust_store)
+
+            tmf = CompositeX509TrustManagerFactory(stmf.getTrustManagers())
             tmf.init(self._trust_store)
-            trust_managers = [CompositeX509TrustManager(tmf.getTrustManagers())]
 
-        context = _JavaSSLContext.getInstance(self._protocol_name)
-
+        kmf = self._key_managers
         if self._key_managers is None:
-            context.init(
-                _get_openssl_key_manager(
-                    cert_file=cert_file, key_file=key_file).getKeyManagers(),
-                trust_managers, None)
-        else:
-            context.init(
-                self._key_managers.getKeyManagers(),
-                trust_managers, None)
+            kmf = _get_openssl_key_manager(cert_file=cert_file, key_file=key_file)
 
-        # addr could be ipv6, only extract relevant parts
-        engine = context.createSSLEngine((hostname or addr[0]), addr[1])
+        context_builder = None
 
-        # apparently this can be used to enforce hostname verification
-        if hostname is not None and self._check_hostname:
-            params = engine.getSSLParameters()
-            params.setEndpointIdentificationAlgorithm('HTTPS')
-            engine.setSSLParameters(params)
+        if not server_side:
+            context_builder = SslContextBuilder.forClient()
+
+        if kmf:
+            if server_side:
+                context_builder = SslContextBuilder.forServer(kmf)
+            else:
+                context_builder = context_builder.keyManager(kmf)
+
+        context_builder = context_builder.trustManager(tmf)
+        context_builder = context_builder.sslProvider(SslProvider.JDK)
+        context_builder = context_builder.clientAuth(_CERT_TO_CLIENT_AUTH[self.verify_mode])
 
         if self._ciphers is not None:
-            engine.setEnabledCipherSuites(self._ciphers)
+            context_builder = context_builder.ciphers(self._ciphers)
+
+        if self._check_hostname:
+            engine = context_builder.build().newEngine(ByteBufAllocator.DEFAULT, hostname, addr[1])
+        else:
+            engine = context_builder.build().newEngine(ByteBufAllocator.DEFAULT, addr[0], addr[1])
+        
+        params = engine.getSSLParameters()
+        params.setProtocols(self.allowed_protocols)
+        if self._check_hostname and HAS_SNI:
+            params.setEndpointIdentificationAlgorithm('HTTPS')
+            params.setServerNames([SNIHostName(hostname)])
+
+        engine.setSSLParameters(params)
 
         return engine
 
@@ -1120,9 +1188,13 @@ class SSLContext(object):
                     if os.path.isfile(possible_cafile):
                         cafiles.append(possible_cafile)
                 elif os.path.isfile(possible_cafile):
-                    with open(possible_cafile) as f:
-                        if PEM_HEADER in f.read():
-                            cafiles.append(possible_cafile)
+                    try:
+                        with open(possible_cafile) as f:
+                            if PEM_HEADER in f.read():
+                                cafiles.append(possible_cafile)
+                    except IOError:
+                        log.debug("Not including %s file as a possible cafile due to permissions error" % possible_cafile)
+                        pass  # Probably permissions related...ignore
 
         certs = []
         private_key = None
@@ -1163,7 +1235,10 @@ class SSLContext(object):
         raise NotImplementedError()
 
     def set_servername_callback(self, server_name_callback):
-        raise NotImplementedError()
+        if not callable(server_name_callback) and server_name_callback is not None:
+            raise TypeError("{!r} is not callable".format(server_name_callback))
+        self._server_name_callback = server_name_callback
+
 
     def load_dh_params(self, dhfile):
         # TODO?

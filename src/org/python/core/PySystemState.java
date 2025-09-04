@@ -13,10 +13,8 @@ import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.nio.charset.Charset;
 import java.nio.charset.UnsupportedCharsetException;
-import java.security.AccessControlException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -32,8 +30,10 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
-import jnr.posix.util.Platform;
-import com.carrotsearch.sizeof.RamUsageEstimator;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.python.Version;
 import org.python.core.adapter.ClassicPyObjectAdapter;
@@ -45,28 +45,32 @@ import org.python.expose.ExposedType;
 import org.python.modules.Setup;
 import org.python.util.Generic;
 
+import com.carrotsearch.sizeof.RamUsageEstimator;
+
+import jnr.posix.util.Platform;
+
+import static org.python.core.RegistryKey.*;
+
+
 /**
  * The "sys" module.
  */
 // xxx Many have lamented, this should really be a module!
 // but it will require some refactoring to see this wish come true.
-public class PySystemState extends PyObject implements AutoCloseable,
-        ClassDictInit, Closeable, Traverseproc {
+public class PySystemState extends PyObject
+        implements AutoCloseable, ClassDictInit, Closeable, Traverseproc {
 
-    public static final String PYTHON_CACHEDIR = "python.cachedir";
-    public static final String PYTHON_CACHEDIR_SKIP = "python.cachedir.skip";
-    public static final String PYTHON_CONSOLE_ENCODING = "python.console.encoding";
-    public static final String PYTHON_IO_ENCODING = "python.io.encoding";
-    public static final String PYTHON_IO_ERRORS = "python.io.errors";
-    protected static final String CACHEDIR_DEFAULT_NAME = "cachedir";
+    private static final Logger logger = Logger.getLogger("org.python.core");
+
+    private static final String CACHEDIR_DEFAULT_NAME = ".jython_cache";
 
     public static final String JYTHON_JAR = "jython.jar";
     public static final String JYTHON_DEV_JAR = "jython-dev.jar";
 
     public static final PyString version = new PyString(Version.getVersion());
 
-    public static final PyTuple subversion = new PyTuple(new PyString("Jython"), Py.newString(""),
-            Py.newString(""));
+    public static final PyTuple subversion =
+            new PyTuple(new PyString("Jython"), Py.newString(""), Py.newString(""));
 
     public static final int hexversion = ((Version.PY_MAJOR_VERSION << 24)
             | (Version.PY_MINOR_VERSION << 16) | (Version.PY_MICRO_VERSION << 8)
@@ -82,26 +86,26 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
     public final static PyString float_repr_style = Py.newString("short");
 
+    /** Nominal Jython file system encoding (as <code>sys.getfilesystemencoding()</code>) */
+    static final PyString FILE_SYSTEM_ENCODING = Py.newString("utf-8");
+
     public static boolean py3kwarning = false;
 
     public final static Class flags = Options.class;
 
-    public final static PyTuple _mercurial = new PyTuple(
-            Py.newString("Jython"),
-            Py.newString(Version.getHGIdentifier()),
-            Py.newString(Version.getHGVersion()));
-    /**
-     * The copyright notice for this release.
-     */
+    public final static PyTuple _mercurial = new PyTuple(Py.newString("Jython"),
+            Py.newString(Version.getHGIdentifier()), Py.newString(Version.getHGVersion()));
 
-    public static final PyObject copyright = Py.newString(
-            "Copyright (c) 2000-2016 Jython Developers.\n" + "All rights reserved.\n\n" +
-            "Copyright (c) 2000 BeOpen.com.\n" + "All Rights Reserved.\n\n" +
-            "Copyright (c) 2000 The Apache Software Foundation.\n" + "All rights reserved.\n\n" +
-            "Copyright (c) 1995-2000 Corporation for National Research Initiatives.\n"
-                + "All Rights Reserved.\n\n" +
-            "Copyright (c) 1991-1995 Stichting Mathematisch Centrum, Amsterdam.\n"
-                + "All Rights Reserved.");
+    /** The copyright notice for this release. */
+    public static final PyObject copyright =
+            Py.newString("Copyright (c) 2000-2017 Jython Developers.\n" + "All rights reserved.\n\n"
+                    + "Copyright (c) 2000 BeOpen.com.\n" + "All Rights Reserved.\n\n"
+                    + "Copyright (c) 2000 The Apache Software Foundation.\n"
+                    + "All rights reserved.\n\n"
+                    + "Copyright (c) 1995-2000 Corporation for National Research Initiatives.\n"
+                    + "All Rights Reserved.\n\n"
+                    + "Copyright (c) 1991-1995 Stichting Mathematisch Centrum, Amsterdam.\n"
+                    + "All Rights Reserved.");
 
     private static Map<String, String> builtinNames;
     public static PyTuple builtin_module_names = null;
@@ -109,13 +113,26 @@ public class PySystemState extends PyObject implements AutoCloseable,
     public static PackageManager packageManager;
     private static File cachedir;
 
-    private static PyList defaultPath;
-    private static PyList defaultArgv;
-    private static PyObject defaultExecutable;
+    private static PyList defaultPath; // list of bytes or unicode
+    private static PyList defaultArgv; // list of bytes or unicode
+    private static PyObject defaultExecutable; // bytes or unicode or None
 
     public static Properties registry; // = init_registry();
+    /**
+     * A string giving the site-specific directory prefix where the platform independent Python
+     * files are installed; by default, this is based on the property <code>python.home</code> or
+     * the location of the Jython JAR. The main collection of Python library modules is installed in
+     * the directory <code>prefix/Lib</code>. This object should contain bytes in the file system
+     * encoding for consistency with use in the standard library (see <code>sysconfig.py</code>).
+     */
     public static PyObject prefix;
-    public static PyObject exec_prefix = Py.EmptyString;
+    /**
+     * A string giving the site-specific directory prefix where the platform-dependent Python files
+     * are installed; by default, this is the same as {@link #exec_prefix}. This object should
+     * contain bytes in the file system encoding for consistency with use in the standard library
+     * (see <code>sysconfig.py</code>).
+     */
+    public static PyObject exec_prefix;
 
     public static final PyString byteorder = new PyString("big");
     public static final int maxint = Integer.MAX_VALUE;
@@ -134,7 +151,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
     public PyList warnoptions = new PyList();
     public PyObject builtins;
-    private static PyObject defaultPlatform = new PyString("java");
+    private static PyObject defaultPlatform = new PyShadowString("java", getNativePlatform());
     public PyObject platform = defaultPlatform;
 
     public PyList meta_path;
@@ -170,9 +187,6 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
     private codecs.CodecState codecState;
 
-    /** true when a SystemRestart is triggered. */
-    public boolean _systemRestart = false;
-
     /** Whether bytecode should be written to disk on import. */
     public boolean dont_write_bytecode = false;
 
@@ -197,8 +211,8 @@ public class PySystemState extends PyObject implements AutoCloseable,
         importLock = new ReentrantLock();
         syspathJavaLoader = new SyspathJavaLoader(imp.getParentClassLoader());
 
-        argv = (PyList)defaultArgv.repeat(1);
-        path = (PyList)defaultPath.repeat(1);
+        argv = (PyList) defaultArgv.repeat(1);
+        path = (PyList) defaultPath.repeat(1);
         path.append(Py.newString(JavaImporter.JAVA_IMPORT_PATH_ENTRY));
         path.append(Py.newString(ClasspathPyImporter.PYCLASSPATH_PREFIX));
         executable = defaultExecutable;
@@ -215,7 +229,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
         currentWorkingDir = new File("").getAbsolutePath();
 
         dont_write_bytecode = Options.dont_write_bytecode;
-        py3kwarning = Options.py3k_warning;
+        py3kwarning = Options.py3k_warning; // XXX why here if static?
         // Set up the initial standard ins and outs
         String mode = Options.unbuffered ? "b" : "";
         int buffering = Options.unbuffered ? 0 : 1;
@@ -236,12 +250,17 @@ public class PySystemState extends PyObject implements AutoCloseable,
         __dict__.__setitem__("displayhook", __displayhook__);
         __dict__.__setitem__("excepthook", __excepthook__);
 
+        logger.config("sys module instance created");
     }
 
     public static void classDictInit(PyObject dict) {
         // XXX: Remove bean accessors for settrace/profile that we don't want
         dict.__setitem__("trace", null);
         dict.__setitem__("profile", null);
+        dict.__setitem__("windowsversion", null);
+        if (!System.getProperty("os.name").startsWith("Windows")) {
+            dict.__setitem__("getwindowsversion", null);
+        }
     }
 
     void reload() throws PyIgnoreMethodTag {
@@ -249,39 +268,39 @@ public class PySystemState extends PyObject implements AutoCloseable,
     }
 
     private static void checkReadOnly(String name) {
-        if (name == "__dict__" || name == "__class__" || name == "registry"
-                || name == "exec_prefix" || name == "packageManager") {
+        if (name == "__dict__" || name == "__class__" || name == "registry" || name == "exec_prefix"
+                || name == "packageManager") {
             throw Py.TypeError("readonly attribute");
         }
     }
 
     private static void checkMustExist(String name) {
-        if (name == "__dict__" || name == "__class__" || name == "registry"
-                || name == "exec_prefix" || name == "platform" || name == "packageManager"
-                || name == "builtins" || name == "warnoptions") {
+        if (name == "__dict__" || name == "__class__" || name == "registry" || name == "exec_prefix"
+                || name == "platform" || name == "packageManager" || name == "builtins"
+                || name == "warnoptions") {
             throw Py.TypeError("readonly attribute");
         }
     }
 
     /**
      * Initialise the encoding of <code>sys.stdin</code>, <code>sys.stdout</code>, and
-     * <code>sys.stderr</code>, and their error handling policy, from registry variables.
-     * Under the console app util.jython, values reflect PYTHONIOENCODING if not overridden.
-     * Note that the encoding must name a Python codec, as in <code>codecs.encode()</code>.
+     * <code>sys.stderr</code>, and their error handling policy, from registry variables. Under the
+     * console app util.jython, values reflect PYTHONIOENCODING if not overridden. Note that the
+     * encoding must name a Python codec, as in <code>codecs.encode()</code>.
      */
     private void initEncoding() {
         // Two registry variables, counterparts to PYTHONIOENCODING = [encoding][:errors]
         String encoding = registry.getProperty(PYTHON_IO_ENCODING);
         String errors = registry.getProperty(PYTHON_IO_ERRORS);
 
-        if (encoding==null) {
+        if (encoding == null) {
             // We still don't have an explicit selection for this: match the console.
             encoding = Py.getConsole().getEncoding();
         }
 
-        ((PyFile)stdin).setEncoding(encoding, errors);
-        ((PyFile)stdout).setEncoding(encoding, errors);
-        ((PyFile)stderr).setEncoding(encoding, "backslashreplace");
+        ((PyFile) stdin).setEncoding(encoding, errors);
+        ((PyFile) stdout).setEncoding(encoding, errors);
+        ((PyFile) stderr).setEncoding(encoding, "backslashreplace");
     }
 
     @Deprecated
@@ -327,6 +346,10 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
     public void setPlatform(PyObject value) {
         platform = value;
+    }
+
+    public WinVersion getwindowsversion() {
+        return WinVersion.getWinVersion();
     }
 
     public synchronized codecs.CodecState getCodecState() {
@@ -456,7 +479,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
         if (ts.tracefunc == null) {
             return Py.None;
         } else {
-            return ((PythonTraceFunction)ts.tracefunc).tracefunc;
+            return ((PythonTraceFunction) ts.tracefunc).tracefunc;
         }
     }
 
@@ -474,7 +497,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
         if (ts.profilefunc == null) {
             return Py.None;
         } else {
-            return ((PythonTraceFunction)ts.profilefunc).tracefunc;
+            return ((PythonTraceFunction) ts.profilefunc).tracefunc;
         }
     }
 
@@ -496,14 +519,17 @@ public class PySystemState extends PyObject implements AutoCloseable,
     }
 
     public PyObject getfilesystemencoding() {
-        return Py.None;
+        return FILE_SYSTEM_ENCODING;
     }
 
-
     /* get and setcheckinterval really do nothing, but it helps when some code tries to use these */
-    public PyInteger getcheckinterval() { return new PyInteger(checkinterval); }
+    public PyInteger getcheckinterval() {
+        return new PyInteger(checkinterval);
+    }
 
-    public void setcheckinterval(int interval) { checkinterval = interval; }
+    public void setcheckinterval(int interval) {
+        checkinterval = interval;
+    }
 
     /**
      * Change the current working directory to the specified path.
@@ -647,8 +673,8 @@ public class PySystemState extends PyObject implements AutoCloseable,
     }
 
     /**
-     * Return the Windows drive letter from the start of the path, upper case, or 0 if
-     * the path does not start X: where X is a letter.
+     * Return the Windows drive letter from the start of the path, upper case, or 0 if the path does
+     * not start X: where X is a letter.
      *
      * @param path to examine
      * @return drive letter or char 0 if no drive letter
@@ -661,13 +687,13 @@ public class PySystemState extends PyObject implements AutoCloseable,
                 return Character.toUpperCase(pathDrive);
             }
         }
-        return (char)0;
+        return (char) 0;
     }
 
     /**
      * Return the Windows UNC share name from the start of the path, or <code>null</code> if the
-     * path is not of Windows UNC type. The path has to be formed with Windows-backslashes:
-     * slashes '/' are not accepted as a substitute here.
+     * path is not of Windows UNC type. The path has to be formed with Windows-backslashes: slashes
+     * '/' are not accepted as a substitute here.
      *
      * @param path to examine
      * @return share name or null
@@ -717,6 +743,15 @@ public class PySystemState extends PyObject implements AutoCloseable,
         this.classLoader = classLoader;
     }
 
+    /**
+     * Work out the root directory of the installation of Jython. Sources for this information are
+     * quite diverse. {@code python.home} will take precedence if set in either
+     * {@code postProperties} or {@code preProperties}, {@code install.root} in
+     * {@code preProperties}, in that order. After this, we search the class path for a JAR, or
+     * nagigate from the JAR deduced by from the class path, or finally {@code jarFileName}.
+     * <p>
+     * We also set by side-effect: {@link #defaultPlatform} from {@code java.version}.
+     */
     private static String findRoot(Properties preProperties, Properties postProperties,
             String jarFileName) {
         String root = null;
@@ -764,6 +799,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
         }
     }
 
+    /** Set {@link #defaultPlatform} by examination of the {@code java.version} JVM property. */
     private static void determinePlatform(Properties props) {
         String version = props.getProperty("java.version");
         if (version == null) {
@@ -779,48 +815,153 @@ public class PySystemState extends PyObject implements AutoCloseable,
         if (version.equals("12")) {
             version = "1.2";
         }
-        defaultPlatform = new PyString("java" + version);
+        defaultPlatform = new PyShadowString("java" + version, getNativePlatform());
     }
 
+    /**
+     * Emulates CPython's way to name sys.platform. Works according to this table:
+     *
+     * <table>
+     * <caption>Platform names</caption>
+     * <tr>
+     * <th style="text-align:left">System</th>
+     * <th style="text-align:left">Value</th>
+     * </tr>
+     * <tr>
+     * <td>Linux (2.x and 3.x)</td>
+     * <td>linux2</td>
+     * </tr>
+     * <tr>
+     * <td>Windows</td>
+     * <td>win32</td>
+     * </tr>
+     * <tr>
+     * <td>Windows/Cygwin</td>
+     * <td>cygwin</td>
+     * </tr>
+     * <tr>
+     * <td>Mac OS X</td>
+     * <td>darwin</td>
+     * </tr>
+     * <tr>
+     * <td>OS/2</td>
+     * <td>os2</td>
+     * </tr>
+     * <tr>
+     * <td>OS/2 EMX</td>
+     * <td>os2emx</td>
+     * </tr>
+     * <tr>
+     * <td>RiscOS</td>
+     * <td>riscos</td>
+     * </tr>
+     * <tr>
+     * <td>AtheOS</td>
+     * <td>atheos</td>
+     * </tr>
+     * </table>
+     *
+     */
+    public static String getNativePlatform() {
+        String osname = System.getProperty("os.name");
+        if (osname.equals("Linux")) {
+            return "linux2";
+        } else if (osname.equals("Mac OS X")) {
+            return "darwin";
+        } else if (osname.toLowerCase().contains("cygwin")) {
+            return "cygwin";
+        } else if (osname.startsWith("Windows")) {
+            return "win32";
+        } else {
+            return osname.replaceAll("[\\s/]", "").toLowerCase();
+        }
+    }
+
+    /**
+     * Install the first argument as the application-wide {@link #registry} (a
+     * {@code java.util.Properties} object), merge values from system and local (or user) properties
+     * files, and finally allow values from {@code postProperties} to override. Usually the first
+     * argument is the {@code System.getProperties()}, if were allowed to access it, and therefore
+     * represents definitions made on the command-line. The net precedence order is:
+     * <table>
+     * <caption>Precedence order of registry sources</caption>
+     * <tr>
+     * <th>Source</th>
+     * <th>Filled by</th>
+     * </tr>
+     * <tr>
+     * <td>postProperties</td>
+     * <td>Custom {@link JythonInitializer}</td>
+     * </tr>
+     * <tr>
+     * <td>preProperties</td>
+     * <td>Command-line definitions {@code -Dkey=value})</td>
+     * </tr>
+     * <tr>
+     * <td>... preProperties also contains ...</td>
+     * <td>Environment variables via {@link org.python.util.jython}</td>
+     * </tr>
+     * <tr>
+     * <td>[user.home]/.jython</td>
+     * <td>User-specific registry file</td>
+     * </tr>
+     * <tr>
+     * <td>[python.home]/registry</td>
+     * <td>Installation-wide registry file</td>
+     * </tr>
+     * <tr>
+     * <td>Environmental inference</td>
+     * <td>e.g. {@code locale} command for console encoding</td>
+     * </tr>
+     * </table>
+     * <p>
+     * We call {@link Options#setFromRegistry()} to translate certain final values to
+     * application-wide controls. By side-effect, set {@link #prefix} and {@link #exec_prefix} from
+     * {@link #findRoot(Properties, Properties, String)}. If it has not been set otherwise, a
+     * default value for python.console.encoding is derived from the OS environment, via
+     * {@link #getConsoleEncoding(Properties)}.
+     *
+     * @param preProperties initial registry
+     * @param postProperties overriding values
+     * @param standalone default {@code python.cachedir.skip} to true (if not otherwise defined)
+     * @param jarFileName as a clue to the location of the installation
+     */
     private static void initRegistry(Properties preProperties, Properties postProperties,
             boolean standalone, String jarFileName) {
         if (registry != null) {
             Py.writeError("systemState", "trying to reinitialize registry");
             return;
         }
-
         registry = preProperties;
+
+        // Work out sys.prefix
         String prefix = findRoot(preProperties, postProperties, jarFileName);
+
+        if (prefix == null || prefix.length() == 0) {
+            /*
+             * All strategies in find_root failed (can happen in embedded use), but sys.prefix is
+             * generally assumed not to be null (or even None). Go for current directory.
+             */
+            prefix = ".";
+            logger.config("No property 'jython.home' or other clue. sys.prefix defaulting to ''.");
+        }
+
+        // sys.exec_prefix is the same initially
         String exec_prefix = prefix;
 
         // Load the default registry
-        if (prefix != null) {
-            if (prefix.length() == 0) {
-                prefix = exec_prefix = ".";
-            }
-            try {
-                // user registry has precedence over installed registry
-                File homeFile = new File(registry.getProperty("user.home"), ".jython");
-                addRegistryFile(homeFile);
-                addRegistryFile(new File(prefix, "registry"));
-            } catch (Exception exc) {
-                // Continue
-            }
-        }
-        if (prefix != null) {
-            PySystemState.prefix = Py.newString(prefix);
-        }
-        if (exec_prefix != null) {
-            PySystemState.exec_prefix = Py.newString(exec_prefix);
-        }
         try {
-            String jythonpath = System.getenv("JYTHONPATH");
-            if (jythonpath != null) {
-                registry.setProperty("python.path", jythonpath);
-            }
-        } catch (SecurityException e) {
-            // Continue
+            // user registry has precedence over installed registry
+            File homeFile = new File(registry.getProperty(USER_HOME), ".jython");
+            addRegistryFile(homeFile);
+            addRegistryFile(new File(prefix, "registry"));
+        } catch (Exception exc) {
+            // Continue: addRegistryFile does its own logging.
         }
+
+        // Exposed values have to be properly-encoded objects
+        PySystemState.prefix = Py.fileSystemEncode(prefix);
+        PySystemState.exec_prefix = Py.fileSystemEncode(exec_prefix);
 
         // Now the post properties (possibly set by custom JythonInitializer).
         registry.putAll(postProperties);
@@ -832,15 +973,12 @@ public class PySystemState extends PyObject implements AutoCloseable,
         }
 
         /*
-         *  The console encoding is the one used by line-editing consoles to decode on the OS side and
-         *  encode on the Python side. It must be a Java codec name, so any relationship to
-         *  python.io.encoding is dubious.
+         * The console encoding is the one used by line-editing consoles to decode on the OS side
+         * and encode on the Python side. It must be a Java codec name, so any relationship to
+         * python.io.encoding is dubious.
          */
         if (!registry.containsKey(PYTHON_CONSOLE_ENCODING)) {
-            String encoding = getPlatformEncoding();
-            if (encoding != null) {
-                registry.put(PYTHON_CONSOLE_ENCODING, encoding);
-            }
+            registry.put(PYTHON_CONSOLE_ENCODING, getConsoleEncoding(registry));
         }
 
         // Set up options from registry
@@ -848,42 +986,50 @@ public class PySystemState extends PyObject implements AutoCloseable,
     }
 
     /**
-     * Return the encoding of the underlying platform, if we can work it out by any means at all.
+     * Try to determine the console encoding from the platform, if necessary using a sub-process to
+     * enquire. If everything fails, assume UTF-8.
      *
-     * @return the encoding of the underlying platform
+     * @param props in which to look for clues (normally the Jython registry)
+     * @return the console encoding (and never {@code null})
      */
-    private static String getPlatformEncoding() {
-        // first try to grab the Console encoding
-        String encoding = getConsoleEncoding();
-        if (encoding == null) {
-            try {
-                // Not quite the console encoding (differs on Windows)
-                encoding = System.getProperty("file.encoding");
-            } catch (SecurityException se) {
-                // ignore, can't do anything about it
+    private static String getConsoleEncoding(Properties props) {
+
+        // From Java 8 onwards, the answer may already be to hand in the registry:
+        String encoding = props.getProperty("sun.stdout.encoding");
+        String os = props.getProperty("os.name");
+
+        if (encoding != null) {
+            return encoding;
+
+        } else if (os != null && os.startsWith("Windows")) {
+            // Go via the Windows code page built-in command "chcp".
+            String output = Py.getCommandResult("cmd", "/c", "chcp");
+            /*
+             * The output will be like "Active code page: 850" or maybe "Aktive Codepage: 1252." or
+             * "활성 코드 페이지: 949". Assume the first number with 2 or more digits is the code page.
+             */
+            final Pattern DIGITS_PATTERN = Pattern.compile("[1-9]\\d+");
+            Matcher matcher = DIGITS_PATTERN.matcher(output);
+            if (matcher.find()) {
+                return "cp".concat(output.substring(matcher.start(), matcher.end()));
+            }
+
+        } else {
+            // Try a Unix-like "locale charmap".
+            String output = Py.getCommandResult("locale", "charmap");
+            // The result of "locale charmap" is just the charmap name ~ Charset or codec name.
+            if (output.length() > 0) {
+                return output;
             }
         }
-        return encoding;
+
+        // If we land here it is because we found no answer, and we will assume UTF-8.
+        return "utf-8";
     }
 
     /**
-     * @return the console encoding; can be <code>null</code>
-     */
-    private static String getConsoleEncoding() {
-        String encoding = null;
-        try {
-            Method encodingMethod = java.io.Console.class.getDeclaredMethod("encoding");
-            encodingMethod.setAccessible(true); // private static method
-            encoding = (String)encodingMethod.invoke(Console.class);
-        } catch (Exception e) {
-            // ignore any exception
-        }
-        return encoding;
-    }
-
-    /**
-     * Merge the contents of a property file into the registry without overriding any values already
-     * set there.
+     * Merge the contents of a property file into the registry, but existing entries with the same
+     * key take precedence.
      *
      * @param file
      */
@@ -916,18 +1062,16 @@ public class PySystemState extends PyObject implements AutoCloseable,
     }
 
     public static Properties getBaseProperties() {
-        try {
-            return System.getProperties();
-        } catch (AccessControlException ace) {
-            return new Properties();
-        }
+        // Moved to PrePy since does not depend on PyObject). Retain in 2.7.x for compatibility.
+        return PrePy.getSystemProperties();
     }
 
     public static synchronized void initialize() {
         initialize(null, null);
     }
 
-    public static synchronized void initialize(Properties preProperties, Properties postProperties) {
+    public static synchronized void initialize(Properties preProperties,
+            Properties postProperties) {
         initialize(preProperties, postProperties, new String[] {""});
     }
 
@@ -947,7 +1091,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
             return;
         }
         if (preProperties == null) {
-            preProperties = getBaseProperties();
+            preProperties = PrePy.getSystemProperties();
         }
         if (postProperties == null) {
             postProperties = new Properties();
@@ -955,7 +1099,8 @@ public class PySystemState extends PyObject implements AutoCloseable,
         try {
             ClassLoader context = Thread.currentThread().getContextClassLoader();
             if (context != null) {
-                if (initialize(preProperties, postProperties, argv, classLoader, adapter, context)) {
+                if (initialize(preProperties, postProperties, argv, classLoader, adapter,
+                        context)) {
                     return;
                 }
             } else {
@@ -1000,8 +1145,8 @@ public class PySystemState extends PyObject implements AutoCloseable,
             ClassLoader initializerClassLoader) {
         InputStream in = initializerClassLoader.getResourceAsStream(INITIALIZER_SERVICE);
         if (in == null) {
-            Py.writeDebug("initializer", "'" + INITIALIZER_SERVICE + "' not found on "
-                    + initializerClassLoader);
+            Py.writeDebug("initializer",
+                    "'" + INITIALIZER_SERVICE + "' not found on " + initializerClassLoader);
             return false;
         }
         BufferedReader r = new BufferedReader(new InputStreamReader(in, Charset.forName("UTF-8")));
@@ -1009,8 +1154,8 @@ public class PySystemState extends PyObject implements AutoCloseable,
         try {
             className = r.readLine();
         } catch (IOException e) {
-            Py.writeWarning("initializer", "Failed reading '" + INITIALIZER_SERVICE + "' from "
-                    + initializerClassLoader);
+            Py.writeWarning("initializer",
+                    "Failed reading '" + INITIALIZER_SERVICE + "' from " + initializerClassLoader);
             e.printStackTrace(System.err);
             return false;
         }
@@ -1018,16 +1163,16 @@ public class PySystemState extends PyObject implements AutoCloseable,
         try {
             initializer = initializerClassLoader.loadClass(className);
         } catch (ClassNotFoundException e) {
-            Py.writeWarning("initializer", "Specified initializer class '" + className
-                    + "' not found, continuing");
+            Py.writeWarning("initializer",
+                    "Specified initializer class '" + className + "' not found, continuing");
             return false;
         }
         try {
-            ((JythonInitializer)initializer.newInstance()).initialize(pre, post, argv,
-                    sysClassLoader, adapter);
+            ((JythonInitializer) initializer.getDeclaredConstructor().newInstance()).initialize(pre,
+                    post, argv, sysClassLoader, adapter);
         } catch (Exception e) {
-            Py.writeWarning("initializer", "Failed initializing with class '" + className
-                    + "', continuing");
+            Py.writeWarning("initializer",
+                    "Failed initializing with class '" + className + "', continuing");
             e.printStackTrace(System.err);
             return false;
         }
@@ -1047,7 +1192,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
         initialized = true;
         Py.setAdapter(adapter);
         boolean standalone = false;
-        String jarFileName = Py._getJarFileName();
+        String jarFileName = Py.getJarFileName();
         if (jarFileName != null) {
             standalone = isStandalone(jarFileName);
         }
@@ -1057,7 +1202,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
         // other initializations
         initBuiltins(registry);
-//        initStaticFields();
+        // initStaticFields();
 
         // Initialize the path (and add system defaults)
         defaultPath = initPath(registry, standalone, jarFileName);
@@ -1070,12 +1215,16 @@ public class PySystemState extends PyObject implements AutoCloseable,
         // Condition the console
         initConsole(registry);
 
-        // Finish up standard Python initialization...
+        /*
+         * Create the first interpreter (which is also the first instance of the sys module) and
+         * cache it as the default state.
+         */
         Py.defaultSystemState = new PySystemState();
         Py.setSystemState(Py.defaultSystemState);
         if (classLoader != null) {
             Py.defaultSystemState.setClassLoader(classLoader);
         }
+
         Py.initClassExceptions(getDefaultBuiltins());
 
         // Make sure that Exception classes have been loaded
@@ -1097,17 +1246,15 @@ public class PySystemState extends PyObject implements AutoCloseable,
             s = "candidate";
         } else if (Version.PY_RELEASE_LEVEL == 0x0F) {
             s = "final";
-        } else if (Version.PY_RELEASE_LEVEL == 0xAA) {
-            s = "snapshot";
         } else {
-            throw new RuntimeException("Illegal value for PY_RELEASE_LEVEL: "
-                    + Version.PY_RELEASE_LEVEL);
+            throw new RuntimeException(
+                    "Illegal value for PY_RELEASE_LEVEL: " + Version.PY_RELEASE_LEVEL);
         }
-        return new PyVersionInfo(
-                Py.newInteger(Version.PY_MAJOR_VERSION),
-                Py.newInteger(Version.PY_MINOR_VERSION),
-                Py.newInteger(Version.PY_MICRO_VERSION),
-                Py.newString(s),
+        return new PyVersionInfo(//
+                Py.newInteger(Version.PY_MAJOR_VERSION), //
+                Py.newInteger(Version.PY_MINOR_VERSION), //
+                Py.newInteger(Version.PY_MICRO_VERSION), //
+                Py.newString(s), //
                 Py.newInteger(Version.PY_RELEASE_SERIAL));
     }
 
@@ -1123,8 +1270,11 @@ public class PySystemState extends PyObject implements AutoCloseable,
         }
         cachedir = new File(props.getProperty(PYTHON_CACHEDIR, CACHEDIR_DEFAULT_NAME));
         if (!cachedir.isAbsolute()) {
-            cachedir = new File(prefix == null ? null : prefix.toString(), cachedir.getPath());
+            String prefixString = props.getProperty("user.dir", "");
+            cachedir = new File(prefixString, cachedir.getPath());
+            cachedir = cachedir.getAbsoluteFile();
         }
+        logger.log(Level.CONFIG, "cache at {0}", cachedir);
     }
 
     private static void initPackages(Properties props) {
@@ -1142,16 +1292,17 @@ public class PySystemState extends PyObject implements AutoCloseable,
         PyList argv = new PyList();
         if (args != null) {
             for (String arg : args) {
-                argv.append(Py.newStringOrUnicode(arg));
+                // For consistency with CPython and the standard library, sys.argv is FS-encoded.
+                argv.append(Py.fileSystemEncode(arg));
             }
         }
         return argv;
     }
 
     /**
-     * Determine the default sys.executable value from the registry.
-     * If registry is not set (as in standalone jython jar), will use sys.prefix + /bin/jython(.exe) and the file may
-     * not exist. Users can create a wrapper in it's place to make it work in embedded environments.
+     * Determine the default sys.executable value from the registry. If registry is not set (as in
+     * standalone jython jar), we will use sys.prefix + /bin/jython(.exe) and the file may not
+     * exist. Users can create a wrapper in it's place to make it work in embedded environments.
      * Only if sys.prefix is null, returns Py.None
      *
      * @param props a Properties registry
@@ -1159,26 +1310,22 @@ public class PySystemState extends PyObject implements AutoCloseable,
      */
     private static PyObject initExecutable(Properties props) {
         String executable = props.getProperty("python.executable");
-        if (executable == null) {
-            if (prefix == null) {
-                return Py.None;
-            } else {
-                executable = prefix.asString() + File.pathSeparator + "bin" + File.pathSeparator;
-                if (Platform.IS_WINDOWS) {
-                    executable += "jython.exe";
-                } else {
-                    executable += "jython";
-                }
-            }
+        File executableFile;
+        if (executable != null) {
+            // The executable from the registry is a Unicode String path
+            executableFile = new File(executable);
+        } else {
+            // The prefix is a unicode or encoded bytes object
+            executableFile = new File(Py.fileSystemDecode(prefix),
+                    Platform.IS_WINDOWS ? "bin\\jython.exe" : "bin/jython");
         }
 
-        File executableFile = new File(executable);
         try {
             executableFile = executableFile.getCanonicalFile();
         } catch (IOException ioe) {
             executableFile = executableFile.getAbsoluteFile();
         }
-        return new PyString(executableFile.getPath());
+        return Py.newStringOrUnicode(executableFile.getPath()); // XXX always bytes in CPython
     }
 
     /**
@@ -1191,12 +1338,14 @@ public class PySystemState extends PyObject implements AutoCloseable,
      * object may be accessed via {@link Py#getConsole()}.
      *
      * @param props containing (or not) <code>python.console</code>
+     *
+     * @see org.python.core.RegistryKey#PYTHON_CONSOLE
      */
     private static void initConsole(Properties props) {
         // At this stage python.console.encoding is always defined (but null=default)
         String encoding = props.getProperty(PYTHON_CONSOLE_ENCODING);
         // The console type is chosen by this registry entry:
-        String consoleName = props.getProperty("python.console", "").trim();
+        String consoleName = props.getProperty(PYTHON_CONSOLE, "").trim();
         // And must be of type ...
         final Class<Console> consoleType = Console.class;
 
@@ -1249,10 +1398,9 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
     /**
      * Convenience method wrapping {@link Py#writeWarning(String, String)} to issue a warning
-     * message something like:
-     * "console: Failed to load 'org.python.util.ReadlineConsole': <b>msg</b>.". It's only a warning
-     * because the interpreter will fall back to a plain console, but it is useful to know exactly
-     * why it didn't work.
+     * message something like: "console: Failed to load 'org.python.util.ReadlineConsole':
+     * <b>msg</b>.". It's only a warning because the interpreter will fall back to a plain console,
+     * but it is useful to know exactly why it didn't work.
      *
      * @param consoleName console class name we're trying to initialise
      * @param msg specific cause of the failure
@@ -1298,7 +1446,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
         }
 
         // add builtins specified in the registry file
-        String builtinprop = props.getProperty("python.modules.builtin", "");
+        String builtinprop = props.getProperty(PYTHON_MODULES_BUILTIN, "");
         StringTokenizer tok = new StringTokenizer(builtinprop, ",");
         while (tok.hasMoreTokens()) {
             addBuiltin(tok.nextToken());
@@ -1319,16 +1467,13 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
     private static PyList initPath(Properties props, boolean standalone, String jarFileName) {
         PyList path = new PyList();
-        addPaths(path, props.getProperty("python.path", ""));
-        if (prefix != null) {
-            String libpath = new File(prefix.toString(), "Lib").toString();
-            path.append(new PyString(libpath));
-        }
+        addPaths(path, props.getProperty(PYTHON_PATH, ""));
+        String libpath = new File(Py.fileSystemDecode(prefix), "Lib").toString();
+        path.append(Py.fileSystemEncode(libpath)); // XXX or newUnicode?
         if (standalone) {
             // standalone jython: add the /Lib directory inside JYTHON_JAR to the path
             addPaths(path, jarFileName + "/Lib");
         }
-
         return path;
     }
 
@@ -1365,7 +1510,8 @@ public class PySystemState extends PyObject implements AutoCloseable,
     private static void addPaths(PyList path, String pypath) {
         StringTokenizer tok = new StringTokenizer(pypath, java.io.File.pathSeparator);
         while (tok.hasMoreTokens()) {
-            path.append(new PyString(tok.nextToken().trim()));
+            // Use unicode object if necessary to represent the element
+            path.append(Py.newStringOrUnicode(tok.nextToken().trim())); // XXX or newUnicode?
         }
     }
 
@@ -1383,16 +1529,17 @@ public class PySystemState extends PyObject implements AutoCloseable,
      * <b>Note</b>. Classes found in directory and sub-directory are not made available to jython by
      * this call. It only makes the java package found in the directory available. This call is
      * mostly useful if jython is embedded in an application that deals with its own class loaders.
-     * A servlet container is a very good example. Calling add_classdir("<context>/WEB-INF/classes")
-     * makes the java packages in WEB-INF classes available to jython import. However the actual
-     * classloading is completely handled by the servlet container's context classloader.
+     * A servlet container is a very good example. Calling
+     * {@code add_classdir("<context>/WEB-INF/classes")} makes the java packages in WEB-INF classes
+     * available to jython import. However the actual class loading is completely handled by the
+     * servlet container's context classloader.
      */
     public static void add_classdir(String directoryPath) {
         packageManager.addDirectory(new File(directoryPath));
     }
 
     /**
-     * Add a .jar & .zip directory to the list of places that are searched for java .jar and .zip
+     * Add a .jar and .zip directory to the list of places that are searched for java .jar and .zip
      * files. The .jar and .zip files found will not be cached.
      * <p>
      * <b>Note</b>. Classes in .jar and .zip files found in the directory are not made available to
@@ -1407,7 +1554,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
     }
 
     /**
-     * Add a .jar & .zip directory to the list of places that are searched for java .jar and .zip
+     * Add a .jar and .zip directory to the list of places that are searched for java .jar and .zip
      * files.
      * <p>
      * <b>Note</b>. Classes in .jar and .zip files found in the directory are not made available to
@@ -1447,8 +1594,8 @@ public class PySystemState extends PyObject implements AutoCloseable,
      * Exit a Python program with the given status.
      *
      * @param status the value to exit with
-     * @exception Py.SystemExit always throws this exception. When caught at top level the program
-     *                will exit.
+     * @throws PyException {@code SystemExit} always throws this exception. When caught at top level
+     *             the program will exit.
      */
     public static void exit(PyObject status) {
         throw new PyException(Py.SystemExit, status);
@@ -1492,6 +1639,10 @@ public class PySystemState extends PyObject implements AutoCloseable,
         return f;
     }
 
+    public static PyDictionary _current_frames() {
+        return ThreadStateMapping._current_frames();
+    }
+
     public void registerCloser(Callable<Void> resourceCloser) {
         closer.registerCloser(resourceCloser);
     }
@@ -1504,11 +1655,15 @@ public class PySystemState extends PyObject implements AutoCloseable,
         closer.cleanup();
     }
 
-    public void close() { cleanup(); }
+    @Override
+    public void close() {
+        cleanup();
+    }
 
     public static class PySystemStateCloser {
 
-        private final Set<Callable<Void>> resourceClosers = Collections.synchronizedSet(new LinkedHashSet<Callable<Void>>());
+        private final Set<Callable<Void>> resourceClosers =
+                Collections.synchronizedSet(new LinkedHashSet<Callable<Void>>());
         private volatile boolean isCleanup = false;
         private final Thread shutdownHook;
 
@@ -1524,6 +1679,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
             Reference<? extends PySystemState> ref;
             while ((ref = systemStateQueue.poll()) != null) {
                 PySystemStateCloser closer = sysClosers.get(ref);
+                sysClosers.remove(ref);
                 closer.cleanup();
             }
         }
@@ -1562,13 +1718,14 @@ public class PySystemState extends PyObject implements AutoCloseable,
             // Re-enable the management of resource closers
             isCleanup = false;
         }
+
         private synchronized void runClosers() {
             // resourceClosers can be null in some strange cases
             if (resourceClosers != null) {
                 /*
-                    * Although a Set, the container iterates in the order closers were added. Make a Deque
-                    * of it and deal from the top.
-                    */
+                 * Although a Set, the container iterates in the order closers were added. Make a
+                 * Deque of it and deal from the top.
+                 */
                 LinkedList<Callable<Void>> rc = new LinkedList<Callable<Void>>(resourceClosers);
                 Iterator<Callable<Void>> iter = rc.descendingIterator();
 
@@ -1586,7 +1743,8 @@ public class PySystemState extends PyObject implements AutoCloseable,
         // Python scripts expect that files are closed upon an orderly cleanup of the VM.
         private Thread initShutdownCloser() {
             try {
-                Thread shutdownHook = new Thread(new ShutdownCloser(this), "Jython Shutdown Closer");
+                Thread shutdownHook =
+                        new Thread(new ShutdownCloser(this), "Jython Shutdown Closer");
                 Runtime.getRuntime().addShutdownHook(shutdownHook);
                 return shutdownHook;
             } catch (SecurityException se) {
@@ -1596,6 +1754,7 @@ public class PySystemState extends PyObject implements AutoCloseable,
         }
 
         private class ShutdownCloser implements Runnable {
+
             PySystemStateCloser closer = null;
 
             public ShutdownCloser(PySystemStateCloser closer) {
@@ -1614,6 +1773,37 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
     }
 
+    /**
+     * Attempt to find the OS version. The mechanism on Windows is to extract it from the result of
+     * {@code cmd.exe /C ver}, and otherwise (assumed Unix-like OS) to use {@code uname -v</code>}.
+     */
+    public static String getSystemVersionString() {
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            // Windows ver command returns a string similar to:
+            // "Microsoft Windows [Version 10.0.10586]"
+            // "Microsoft Windows XP [Version 5.1.2600]"
+            // "Microsoft Windows [版本 10.0.17134.472]"
+            // We match the dots and digits within square brackets.
+            Pattern p = Pattern.compile("\\[.* ([\\d.]+)\\]");
+            Matcher m = p.matcher(Py.getCommandResult("cmd.exe", "/c", "ver"));
+            return m.find() ? m.group(1) : "";
+        } else {
+            return Py.getCommandResult("uname", "-v");
+        }
+    }
+
+    /**
+     * Run a command as a sub-process and return as the result the first line of output that
+     * consists of more than white space. It returns "" on any kind of error.
+     *
+     * @param command as strings (as for <code>ProcessBuilder</code>)
+     * @return the first line with content, or ""
+     * @deprecated Use {@link Py#getCommandResult(String...)} instead
+     */
+    @Deprecated
+    private static String getCommandResult(String... command) {
+        return PrePy.getCommandResult(command);
+    }
 
     /* Traverseproc implementation */
     @Override
@@ -1768,16 +1958,14 @@ public class PySystemState extends PyObject implements AutoCloseable,
 
     @Override
     public boolean refersDirectlyTo(PyObject ob) {
-        return ob != null && (ob == argv || ob ==  modules || ob == path
-            || ob == warnoptions || ob == builtins || ob == platform
-            || ob == meta_path || ob == path_hooks || ob == path_importer_cache
-            || ob == ps1 || ob == ps2 || ob == executable || ob == stdout
-            || ob == stderr || ob == stdin || ob == __stdout__ || ob == __stderr__
-            || ob == __stdin__ || ob == __displayhook__ || ob == __excepthook__
-            || ob ==  last_value || ob == last_type || ob == last_traceback
-            || ob ==__name__ || ob == __dict__);
+        return ob != null && (ob == argv || ob == modules || ob == path || ob == warnoptions
+                || ob == builtins || ob == platform || ob == meta_path || ob == path_hooks
+                || ob == path_importer_cache || ob == ps1 || ob == ps2 || ob == executable
+                || ob == stdout || ob == stderr || ob == stdin || ob == __stdout__
+                || ob == __stderr__ || ob == __stdin__ || ob == __displayhook__
+                || ob == __excepthook__ || ob == last_value || ob == last_type
+                || ob == last_traceback || ob == __name__ || ob == __dict__);
     }
-
 
     /**
      * Helper abstracting common code from {@link ShutdownCloser#run()} and
@@ -1895,80 +2083,18 @@ class FloatInfo extends PyTuple {
         );
     }
 
-
-    /* Traverseproc implementation */
     @Override
-    public int traverse(Visitproc visit, Object arg) {
-        int retVal = super.traverse(visit, arg);
-        if (max != null) {
-            retVal = visit.visit(max, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (max_exp != null) {
-            retVal = visit.visit(max_exp, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (max_10_exp != null) {
-            retVal = visit.visit(max_10_exp, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (min != null) {
-            retVal = visit.visit(min, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (min_exp != null) {
-            retVal = visit.visit(min_exp, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (min_10_exp != null) {
-            retVal = visit.visit(min_10_exp, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (dig != null) {
-            retVal = visit.visit(dig, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (mant_dig != null) {
-            retVal = visit.visit(mant_dig, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (epsilon != null) {
-            retVal = visit.visit(epsilon, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        if (radix != null) {
-            retVal = visit.visit(radix, arg);
-            if (retVal != 0) {
-                return retVal;
-            }
-        }
-        return rounds == null ? 0 : visit.visit(rounds, arg);
+    public PyString __repr__() {
+        return (PyString) Py.newString(TYPE.fastGetName() + "("
+                + "max=%r, max_exp=%r, max_10_exp=%r, min=%r, min_exp=%r, min_10_exp=%r, "
+                + "dig=%r, mant_dig=%r, epsilon=%r, radix=%r, rounds=%r)").__mod__(this);
     }
 
-    @Override
-    public boolean refersDirectlyTo(PyObject ob) {
-        return ob != null && (ob == max || ob == max_exp || ob == max_10_exp || ob == min
-            || ob == min_exp || ob == min_10_exp || ob == dig
-            || ob == mant_dig || ob == epsilon || ob == radix || ob == rounds);
-    }
+    /*
+     * Note for Traverseproc implementation: We needn't visit the fields, because they are also
+     * represented as tuple elements in the parent class. So deferring to super-implementation is
+     * sufficient.
+     */
 }
 
 
@@ -1993,22 +2119,78 @@ class LongInfo extends PyTuple {
         return new LongInfo(Py.newLong(30), Py.newLong(4));
     }
 
-
-    /* Traverseproc implementation */
     @Override
-    public int traverse(Visitproc visit, Object arg) {
-        int retVal = super.traverse(visit, arg);
-        if (bits_per_digit != null) {
-            retVal = visit.visit(bits_per_digit, arg);
-            if (retVal != 0) {
-                return retVal;
+    public PyString __repr__() {
+        return (PyString) Py
+                .newString(TYPE.fastGetName() + "(" + "bits_per_digit=%r, sizeof_digit=%r)")
+                .__mod__(this);
+    }
+
+    /*
+     * Note for Traverseproc implementation: We needn't visit the fields, because they are also
+     * represented as tuple elements in the parent class. So deferring to super-implementation is
+     * sufficient.
+     */
+}
+
+
+@ExposedType(name = "sys.getwindowsversion", isBaseType = false)
+class WinVersion extends PyTuple {
+
+    @ExposedGet
+    public PyObject major, minor, build, platform, service_pack;
+
+    public static final PyType TYPE = PyType.fromClass(WinVersion.class);
+
+    private WinVersion(PyObject... vals) {
+        super(TYPE, vals);
+
+        major = vals[0];
+        minor = vals[1];
+        build = vals[2];
+        platform = vals[3];
+        service_pack = vals[4];
+    }
+
+    public static WinVersion getWinVersion() {
+        try {
+            String sysver = PySystemState.getSystemVersionString();
+            String[] sys_ver = sysver.split("\\.");
+            int major = Integer.parseInt(sys_ver[0]);
+            int minor = Integer.parseInt(sys_ver[1]);
+            int build = Integer.parseInt(sys_ver[2]);
+            if (major > 6) {
+                major = 6;
+                minor = 2;
+                build = 9200;
+            } else if (major == 6 && minor > 2) {
+                minor = 2;
+                build = 9200;
             }
+            // emulate deprecation behavior of GetVersionEx:
+            return new WinVersion(Py.newInteger(major), // major
+                    Py.newInteger(minor), // minor
+                    Py.newInteger(build), // build
+                    Py.newInteger(2), // platform
+                    Py.EmptyString); // service_pack
+        } catch (Exception e) {
+            return new WinVersion(Py.EmptyString, Py.EmptyString, Py.EmptyString, Py.EmptyString,
+                    Py.EmptyString);
         }
-        return sizeof_digit == null ? 0 : visit.visit(sizeof_digit, arg);
     }
 
     @Override
-    public boolean refersDirectlyTo(PyObject ob) {
-        return ob != null && (ob == bits_per_digit || ob == sizeof_digit);
+    public PyString __repr__() {
+        return (PyString) Py.newString(TYPE.fastGetName() + "(major=%r, minor=%r, build=%r, "
+                + "platform=%r, service_pack=%r)").__mod__(this);
     }
+
+    /*
+     * Note for traverseproc implementation: We needn't visit the fields, because they are also
+     * represented as tuple elements in the parent class. So deferring to super-implementation is
+     * sufficient.
+     *
+     * (In CPython sys.getwindowsversion can have some keyword-only elements. So far we don't
+     * support these here. If that changes, an actual traverseproc implementation might be required.
+     */
 }

@@ -8,6 +8,9 @@ syntax: glob
 *.swp
 \#*
 *~
+
+.gradle
+
 # IntelliJ files
 *.eml
 *.ipr
@@ -25,10 +28,18 @@ syntax: glob
 .DS_Store
 .settings
 __pycache__
-ant.properties
 bin
+
+# Jython specific
+ant.properties
 build
+build2
 cachedir
+.jython_cache
 dist
+publications
+reports
+jffi*.dll
+
 profile.txt
 out
