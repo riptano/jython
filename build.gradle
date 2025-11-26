@@ -765,6 +765,58 @@ publishing {
                 }
             }
         }
+
+        // DataStax-specific publication for jython-standalone
+        standalone(MavenPublication) {
+            groupId = 'com.datastax.opscenter'
+            artifactId = 'jython-standalone'
+            version = project.version
+
+            // Construct the standalone JAR filename based on version
+            artifact(project.file("${projectDir}/dist/jython-standalone-${project.version}.jar")) {
+                extension = 'jar'
+            }
+
+            pom {
+                name = 'Jython Standalone'
+                description = 'Jython standalone JAR with Python standard library included'
+                url = 'https://www.jython.org/'
+
+                licenses {
+                    license {
+                        name = 'Jython Software License'
+                        url = 'https://www.jython.org/'
+                        distribution = 'repo'
+                    }
+                }
+            }
+        }
+
+        // DataStax-specific publication for jython-installer
+        installer(MavenPublication) {
+            groupId = 'com.datastax.opscenter'
+            artifactId = 'jython-installer'
+            version = project.version
+
+            // Construct the installer JAR filename based on version
+            artifact(project.file("${projectDir}/dist/jython-installer-${project.version}.jar")) {
+                extension = 'jar'
+            }
+
+            pom {
+                name = 'Jython Installer'
+                description = 'Jython installer JAR with full distribution and installer'
+                url = 'https://www.jython.org/'
+
+                licenses {
+                    license {
+                        name = 'Jython Software License'
+                        url = 'https://www.jython.org/'
+                        distribution = 'repo'
+                    }
+                }
+            }
+        }
     }
 
     repositories {
@@ -773,11 +825,45 @@ publishing {
             name = 'stagingRepo'
             url = "file://${buildDir}/stagingRepo"
         }
+
+        // DataStax Artifactory repository
+        maven {
+            name = 'datastaxArtifactory'
+            url = "${datastaxArtifactRepositoryUrl}/${datastaxRepositoryName}"
+            credentials {
+                username = datastaxRepositoryUsername
+                password = datastaxRepositoryPassword
+            }
+        }
     }
+}
+
+// Gradle task to invoke Ant's jar-standalone target
+task buildStandaloneJar(type: Exec) {
+    description = 'Build jython-standalone.jar using Ant'
+    commandLine 'ant', 'jar-standalone'
+    workingDir projectDir
+}
+
+// Gradle task to invoke Ant's jar-installer target
+task buildInstallerJar(type: Exec) {
+    description = 'Build jython-installer.jar using Ant'
+    commandLine 'ant', 'jar-installer'
+    workingDir projectDir
 }
 
 // Ensure version computation/branding precedes any publication we use.
 publish.dependsOn(generateVersionInfo)
+
+// Ensure JARs are built before publishing
+tasks.withType(PublishToMavenRepository) {
+    if (it.name.contains('Standalone')) {
+        it.dependsOn(buildStandaloneJar)
+    }
+    if (it.name.contains('Installer')) {
+        it.dependsOn(buildInstallerJar)
+    }
+}
 
 /* FIXME: Depending on publishMainPublicationToMavenLocal does not work,
    because it does not exist when evaluating this line. Is this the deferred

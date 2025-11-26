@@ -37,30 +37,21 @@ pipeline {
                                                    replaceTokens: true,
                                                    targetLocation: 'gradle.properties')]) {
                         withAnt(installation: 'ant-1.10.7') {
-                            sh "ant installer"
-                            sh "mkdir artifacts"
-                            sh "cp dist/jython-standalone* artifacts/"
-                            sh "cp dist/jython-installer* artifacts/"
+                            sh "ant jar-standalone"
+                            sh "ant jar-installer"
                         }
                     }
                 archiveArtifacts artifacts: 'dist/jython-standalone-*.jar', onlyIfSuccessful: true, defaultExcludes: false, caseSensitive: false
                 archiveArtifacts artifacts: 'dist/jython-installer-*.jar', onlyIfSuccessful: true, defaultExcludes: false, caseSensitive: false
             }
         }
-        stage ('Upload to artifactory') {
+        stage('Publish to Artifactory') {
             steps {
-                script {
-                    def directoryPath = 'artifacts'
-                    def filenames = sh(script: "ls ${directoryPath}", returnStdout: true).trim().split('\n')
-
-                    withCredentials([usernamePassword(credentialsId: 'dse-artifactory',
-                                                  usernameVariable: 'ARTIFACTORY_USER',
-                                                  passwordVariable: 'ARTIFACTORY_PASSWORD')]) {
-                        for (def filename in filenames) {
-                            sh "echo $filename"
-                            sh "curl -sSf -u '$ARTIFACTORY_USER:$ARTIFACTORY_PASSWORD' -X PUT -T artifacts/$filename 'https://repo.aws.dsinternal.org/artifactory/datastax-public-releases-local/com/datastax/opscenter/jython-standalone/2.7.3a1/$filename'"
-                        }
-                    }
+                configFileProvider([configFile(fileId: 'gradle.properties',
+                                               replaceTokens: true,
+                                               targetLocation: 'gradle.properties')]) {
+                    sh "./gradlew publishStandalonePublicationToDatastaxArtifactoryRepository"
+                    sh "./gradlew publishInstallerPublicationToDatastaxArtifactoryRepository"
                 }
             }
         }

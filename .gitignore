@@ -48,3 +48,6 @@ jffi*.dll
 
 profile.txt
 out
+
+# Gradle properties with credentials
+gradle.properties
