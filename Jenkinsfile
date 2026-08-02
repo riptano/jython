@@ -17,7 +17,7 @@ pipeline {
     }
 
     tools {
-        jdk('jdk-8')
+        jdk('jdk-11')
     }
 
     parameters {
@@ -42,7 +42,10 @@ pipeline {
                     echo "Building jython-standalone version: ${env.JYTHON_VERSION}"
                 }
                 withAnt(installation: 'ant-1.10.7') {
-                    sh "ant jar-standalone"
+                    // Pass pre-generated ANTLR sources so antlr_gen is skipped.
+                    // antlr-3.1.3 has a Java 8 incompatibility in ArrayList.removeAll;
+                    // committing the generated files avoids running the ANTLR tool at all.
+                    sh "ant jar-standalone -Dgensrc.dir=gensrc"
                     sh "mkdir -p artifacts"
                     sh "cp dist/jython-standalone-*.jar artifacts/"
                 }
