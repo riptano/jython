@@ -189,7 +189,7 @@ public class PythonLexer extends Lexer {
         super(input,state);
 
     }
-    public String getGrammarFileName() { return "/Users/orion.moore/apps/code/jython/grammar/Python.g"; }
+    public String getGrammarFileName() { return "grammar/Python.g"; }
 
     // $ANTLR start "AS"
     public final void mAS() throws RecognitionException {

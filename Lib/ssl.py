@@ -560,7 +560,8 @@ class SSLSocket(object):
             # http://stackoverflow.com/questions/13390964/java-ssl-fatal-error-80-unwrapping-net-record-after-adding-the-https-en
             self.engine = self._context._createSSLEngine(
                 addr, self.server_hostname,
-                cert_file=getattr(self, "certfile", None), key_file=getattr(self, "keyfile", None))
+                cert_file=getattr(self, "certfile", None), key_file=getattr(self, "keyfile", None),
+                server_side=self.server_side)
             self.engine.setUseClientMode(not self.server_side)
 
     def connect(self, addr):
@@ -1038,9 +1039,9 @@ class SSLContext(object):
                          server_hostname=server_hostname,
                          _context=self)
 
-    def _createSSLEngine(self, addr, hostname=None, cert_file=None, key_file=None):
+    def _createSSLEngine(self, addr, hostname=None, cert_file=None, key_file=None, server_side=False):
         trust_managers = [NoVerifyX509TrustManager()]
-        if self.verify_mode == CERT_REQUIRED:
+        if self.verify_mode in (CERT_REQUIRED, CERT_OPTIONAL):
             tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
             tmf.init(self._trust_store)
             trust_managers = [CompositeX509TrustManager(tmf.getTrustManagers())]
@@ -1061,6 +1062,13 @@ class SSLContext(object):
         engine = context.createSSLEngine((hostname or addr[0]), addr[1])
         params = engine.getSSLParameters()
         params.setProtocols(self.allowed_protocols)
+
+        # Configure server-side client-authentication based on verify_mode
+        if server_side:
+            if self.verify_mode == CERT_REQUIRED:
+                params.setNeedClientAuth(True)
+            elif self.verify_mode == CERT_OPTIONAL:
+                params.setWantClientAuth(True)
 
         engine.setSSLParameters(params)
 

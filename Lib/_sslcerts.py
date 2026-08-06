@@ -328,7 +328,7 @@ class CompositeX509KeyManager(X509KeyManager):
     
     def getPrivateKey(self, alias):
         for key_manager in self.key_managers:
-            private_key = keyManager.getPrivateKey(alias)
+            private_key = key_manager.getPrivateKey(alias)
             if private_key:
                 return private_key
         return None
@@ -413,4 +413,4 @@ class NoVerifyX509TrustManager(X509TrustManager):
         pass
 
     def getAcceptedIssuers(self):
-        return None
+        return []
