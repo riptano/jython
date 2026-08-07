@@ -6,6 +6,7 @@ import uuid
 from java.io import BufferedInputStream, PrintWriter, StringWriter
 from java.security import KeyStore, KeyStoreException
 from java.security.cert import CertificateParsingException
+from javax.net.ssl import TrustManagerFactory
 from javax.naming.ldap import LdapName
 from java.lang import IllegalArgumentException, System
 import logging
@@ -18,16 +19,11 @@ import threading
 try:
     # jarjar-ed version
     from org.python.netty.channel import ChannelInitializer
-    from org.python.netty.handler.ssl import SslHandler, SslProvider, SslContextBuilder, ClientAuth
-    from org.python.netty.handler.ssl.util import SimpleTrustManagerFactory, InsecureTrustManagerFactory
-    from org.python.netty.buffer import ByteBufAllocator
-
+    from org.python.netty.handler.ssl import SslHandler
 except ImportError:
     # dev version from extlibs
     from io.netty.channel import ChannelInitializer
-    from io.netty.handler.ssl import SslHandler, SslProvider, SslContextBuilder, ClientAuth
-    from io.netty.handler.ssl.util import SimpleTrustManagerFactory, InsecureTrustManagerFactory
-    from io.netty.buffer import ByteBufAllocator
+    from io.netty.handler.ssl import SslHandler
 
 from _socket import (
     SSLError, raises_java_exception,
@@ -49,7 +45,7 @@ from _socket import (
     error as socket_error)
 
 from _sslcerts import _get_openssl_key_manager, _extract_cert_from_data, _extract_certs_for_paths, \
-    _str_hash_key_entry, _get_ecdh_parameter_spec, CompositeX509TrustManagerFactory
+    NoVerifyX509TrustManager, _str_hash_key_entry, _get_ecdh_parameter_spec, CompositeX509TrustManager
 from _sslcerts import SSLContext as _JavaSSLContext
 
 from java.text import SimpleDateFormat
@@ -58,13 +54,6 @@ from java.util.concurrent import CountDownLatch
 from javax.naming.ldap import LdapName
 from javax.security.auth.x500 import X500Principal
 from org.ietf.jgss import Oid
-
-try:
-    # requires Java 8 or higher for this support
-    from javax.net.ssl import SNIHostName, SNIMatcher
-    HAS_SNI = True
-except ImportError:
-    HAS_SNI = False
 
 log = logging.getLogger("_socket")
 ssl_log = logging.getLogger("jython_ssl")
@@ -76,10 +65,6 @@ OPENSSL_VERSION_INFO = (1, 0, 0, 0, 0)
 _OPENSSL_API_VERSION = OPENSSL_VERSION_INFO
 
 CERT_NONE, CERT_OPTIONAL, CERT_REQUIRED = range(3)
-
-_CERT_TO_CLIENT_AUTH = {CERT_NONE: ClientAuth.NONE,
-                        CERT_OPTIONAL: ClientAuth.OPTIONAL,
-                        CERT_REQUIRED: ClientAuth.REQUIRE}
 
 # Do not support PROTOCOL_SSLv2, it is highly insecure and it is optional
 _, PROTOCOL_SSLv3, PROTOCOL_SSLv23, PROTOCOL_TLSv1, PROTOCOL_TLSv1_1, PROTOCOL_TLSv1_2 = range(6)
@@ -104,8 +89,7 @@ VERIFY_DEFAULT, VERIFY_CRL_CHECK_LEAF, VERIFY_CRL_CHECK_CHAIN, VERIFY_X509_STRIC
 CHANNEL_BINDING_TYPES = []
 
 # https://docs.python.org/2/library/ssl.html#ssl.HAS_ALPN etc...
-HAS_ALPN, HAS_NPN, HAS_ECDH = False, False, True
-
+HAS_ALPN, HAS_NPN, HAS_ECDH, HAS_SNI = False, False, True, False
 
 # TODO not supported on jython yet
 # Disable weak or insecure ciphers by default
@@ -570,10 +554,6 @@ class SSLSocket(object):
     @property
     def context(self):
         return self._context
-
-    @context.setter
-    def context(self, context):
-        self._context = context
 
     def setup_engine(self, addr):
         if self.engine is None:
@@ -1049,8 +1029,6 @@ class SSLContext(object):
 
         self._key_managers = None
 
-        self._server_name_callback = None
-
     def wrap_socket(self, sock, server_side=False,
                     do_handshake_on_connect=True,
                     suppress_ragged_eofs=True,
@@ -1062,53 +1040,46 @@ class SSLContext(object):
                          _context=self)
 
     def _createSSLEngine(self, addr, hostname=None, cert_file=None, key_file=None, server_side=False):
-        tmf = InsecureTrustManagerFactory.INSTANCE
-        if self.verify_mode != CERT_NONE:
-            # XXX need to refactor so we don't have to get trust managers twice
-            stmf = SimpleTrustManagerFactory.getInstance(SimpleTrustManagerFactory.getDefaultAlgorithm())
-            stmf.init(self._trust_store)
-
-            tmf = CompositeX509TrustManagerFactory(stmf.getTrustManagers())
+        trust_managers = [NoVerifyX509TrustManager()]
+        if self.verify_mode in (CERT_REQUIRED, CERT_OPTIONAL):
+            tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
             tmf.init(self._trust_store)
+            trust_managers = [CompositeX509TrustManager(tmf.getTrustManagers())]
 
-        kmf = self._key_managers
+        context = _JavaSSLContext.getInstance(self._protocol_name)
+
         if self._key_managers is None:
-            kmf = _get_openssl_key_manager(cert_file=cert_file, key_file=key_file)
-
-        context_builder = None
-
-        if not server_side:
-            context_builder = SslContextBuilder.forClient()
-
-        if kmf:
-            if server_side:
-                context_builder = SslContextBuilder.forServer(kmf)
-            else:
-                context_builder = context_builder.keyManager(kmf)
+            context.init(
+                _get_openssl_key_manager(
+                    cert_file=cert_file, key_file=key_file).getKeyManagers(),
+                trust_managers, None)
+        else:
+            context.init(
+                self._key_managers.getKeyManagers(),
+                trust_managers, None)
 
         # addr could be ipv6, only extract relevant parts
         engine = context.createSSLEngine((hostname or addr[0]), addr[1])
         params = engine.getSSLParameters()
         params.setProtocols(self.allowed_protocols)
 
+        # Configure server-side client-authentication based on verify_mode
+        if server_side:
+            if self.verify_mode == CERT_REQUIRED:
+                params.setNeedClientAuth(True)
+            elif self.verify_mode == CERT_OPTIONAL:
+                params.setWantClientAuth(True)
+
         engine.setSSLParameters(params)
 
-        context_builder = context_builder.trustManager(tmf)
-        context_builder = context_builder.sslProvider(SslProvider.JDK)
-        context_builder = context_builder.clientAuth(_CERT_TO_CLIENT_AUTH[self.verify_mode])
+        # apparently this can be used to enforce hostname verification
+        if hostname is not None and self._check_hostname:
+            params = engine.getSSLParameters()
+            params.setEndpointIdentificationAlgorithm('HTTPS')
+            engine.setSSLParameters(params)
 
         if self._ciphers is not None:
-            context_builder = context_builder.ciphers(self._ciphers)
-
-        if self._check_hostname:
-            engine = context_builder.build().newEngine(ByteBufAllocator.DEFAULT, hostname, addr[1])
-            if HAS_SNI:
-                params = engine.getSSLParameters()
-                params.setEndpointIdentificationAlgorithm('HTTPS')
-                params.setServerNames([SNIHostName(hostname)])
-                engine.setSSLParameters(params)
-        else:
-            engine = context_builder.build().newEngine(ByteBufAllocator.DEFAULT, addr[0], addr[1])
+            engine.setEnabledCipherSuites(self._ciphers)
 
         return engine
 
@@ -1192,10 +1163,7 @@ class SSLContext(object):
         raise NotImplementedError()
 
     def set_servername_callback(self, server_name_callback):
-        if not callable(server_name_callback) and server_name_callback is not None:
-            raise TypeError("{!r} is not callable".format(server_name_callback))
-        self._server_name_callback = server_name_callback
-
+        raise NotImplementedError()
 
     def load_dh_params(self, dhfile):
         # TODO?

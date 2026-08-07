@@ -10,15 +10,8 @@ from java.security import KeyStore, Security, InvalidAlgorithmParameterException
 from java.security.cert import CertificateException, CertificateFactory
 from java.security.interfaces import RSAPrivateCrtKey
 from java.security.interfaces import RSAPublicKey
-from javax.net.ssl import X509KeyManager, X509TrustManager, KeyManagerFactory, SSLContext
-
-try:
-    # jarjar-ed version
-    from org.python.netty.handler.ssl.util import SimpleTrustManagerFactory
-
-except ImportError:
-    # dev version from extlibs
-    from io.netty.handler.ssl.util import SimpleTrustManagerFactory
+from javax.net.ssl import (
+    X509KeyManager, X509TrustManager, KeyManagerFactory, SSLContext, TrustManager, TrustManagerFactory)
 
 try:
     # dev version from extlibs OR if in classpath.
@@ -70,7 +63,7 @@ def _get_ca_certs_trust_manager(ca_certs=None):
             for cert in cf.generateCertificates(BufferedInputStream(f)):
                 trust_store.setCertificateEntry(str(uuid.uuid4()), cert)
                 num_certs_installed += 1
-    tmf = SimpleTrustManagerFactory.getInstance(SimpleTrustManagerFactory.getDefaultAlgorithm())
+    tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
     tmf.init(trust_store)
     log.debug("Installed %s certificates", num_certs_installed, extra={"sock": "*"})
     return tmf
@@ -410,13 +403,14 @@ class CompositeX509TrustManager(X509TrustManager):
         return certs
 
 
-class CompositeX509TrustManagerFactory(SimpleTrustManagerFactory):
+# To use with CERT_NONE
+class NoVerifyX509TrustManager(X509TrustManager):
 
-    def __init__(self, trust_managers):
-        self._trust_manager = CompositeX509TrustManager(trust_managers)
-
-    def engineInit(self, arg):
+    def checkClientTrusted(self, chain, auth_type):
         pass
 
-    def engineGetTrustManagers(self):
-        return [self._trust_manager]
+    def checkServerTrusted(self, chain, auth_type):
+        pass
+
+    def getAcceptedIssuers(self):
+        return []
